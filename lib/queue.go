@@ -26,6 +26,7 @@ type QueueItem struct {
 
 type RequestQueue struct {
 	sync.RWMutex
+	bucketMu sync.RWMutex
 	// bucket path as key
 	queues map[string]chan *QueueItem
 	buckets map[string]*Bucket
@@ -125,10 +126,19 @@ func (q *RequestQueue) subscribe(ch chan *QueueItem, path string) {
 			<- time.After(time.Until(reset))
 			goto takeGlobal
 		}
+		q.bucketMu.RLock()
 		bucket, ok := q.buckets[path]
 		if !ok {
-			bucket = NewBucket(1,1, time.Now().Add(5 * time.Second))
-			q.buckets[path] = bucket
+			q.bucketMu.RUnlock()
+			q.bucketMu.Lock()
+			bucket, ok := q.buckets[path]
+			if !ok {
+				bucket = NewBucket(1, 1, time.Now().Add(5*time.Second))
+				q.buckets[path] = bucket
+			}
+			q.bucketMu.Unlock()
+		} else {
+			q.bucketMu.RUnlock()
 		}
 
 		bucket.Take()
