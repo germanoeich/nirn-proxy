@@ -9,6 +9,8 @@ const (
 	MajorChannels = "channels"
 	MajorGuilds = "guilds"
 	MajorWebhooks = "webhooks"
+	MajorInvites = "invites"
+	MajorInteractions = "interactions"
 )
 
 func IsSnowflake(str string) bool {
@@ -69,22 +71,20 @@ func GetOptimisticBucketPath(url string, method string) string {
 		}
 		bucket += MajorChannels + "/" + parts[1]
 		currMajor = MajorChannels
+	case MajorInvites:
+		bucket += MajorInvites + "/!"
+		currMajor = MajorInvites
 	case MajorGuilds:
-		bucket += MajorGuilds + "/" + parts[1]
-		currMajor = MajorGuilds
+		fallthrough
 	case MajorWebhooks:
-		bucket += MajorWebhooks + "/" + parts[1]
-		currMajor = MajorWebhooks
+		fallthrough
 	default:
 		bucket += parts[0] + "/" + parts[1]
+		currMajor = parts[0]
 	}
 
 	if numParts == 2 {
 		return bucket
-	}
-
-	if currMajor == MajorUnknown {
-		//fmt.Println("Unknown major:", parts)
 	}
 
 	// At this point, the major + id part is already accounted for
@@ -98,6 +98,12 @@ func GetOptimisticBucketPath(url string, method string) string {
 				//is passing userid, emoji, etc.
 				bucket += "/reactions/!/!"
 				//Reactions can only be followed by emoji/userid combo, since we don't care, break
+				break
+			}
+
+			// Strip webhook tokens and interaction tokens
+			if (currMajor == MajorWebhooks || currMajor == MajorInteractions) && len(part) >= 64 {
+				bucket += "/!"
 				break
 			}
 			bucket += "/" + part
