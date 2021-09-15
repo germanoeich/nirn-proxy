@@ -131,7 +131,7 @@ func (q *RequestQueue) subscribe(ch chan *QueueItem, path string) {
 		if !ok {
 			q.bucketMu.RUnlock()
 			q.bucketMu.Lock()
-			bucket, ok := q.buckets[path]
+			bucket, ok = q.buckets[path]
 			if !ok {
 				bucket = NewBucket(1, 1, time.Now().Add(5*time.Second))
 				q.buckets[path] = bucket
