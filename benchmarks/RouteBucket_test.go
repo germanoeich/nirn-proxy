@@ -3,6 +3,7 @@ package benchmarks
 import (
 	"github.com/germanoeich/nirn-proxy/lib"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -45,5 +46,33 @@ func BenchmarkOptimistic(b *testing.B) {
 	url := `guilds/121124124124124124/pins/121124124124124124`
 	for n := 0; n < b.N; n++ {
 		lib.GetOptimisticBucketPath(url, "GET")
+	}
+}
+
+// ====================================================
+
+var prefixUrl = `/api/v9/guilds/121124124124124124/pins/121124124124124124`
+
+func BenchmarkPrefixStripReplaceAllNaive(b *testing.B) {
+	b.ReportAllocs()
+	for n := 0; n < b.N; n++ {
+		strings.ReplaceAll(prefixUrl, "/api/v10/", "")
+		strings.ReplaceAll(prefixUrl, "/api/v9/", "")
+		strings.ReplaceAll(prefixUrl, "/api/v8/", "")
+		strings.ReplaceAll(prefixUrl, "/api/v7/", "")
+		strings.ReplaceAll(prefixUrl, "/api/v6/", "")
+	}
+}
+
+func BenchmarkPrefixStripReplaceAllSmart(b *testing.B) {
+	b.ReportAllocs()
+	for n := 0; n < b.N; n++ {
+		var clean string
+		if strings.HasPrefix(prefixUrl, "/api/v") {
+			clean = strings.ReplaceAll(prefixUrl, "/api/v", "")
+			l := len(clean)
+			i := strings.Index(clean, "/")
+			clean = clean[i:l]
+		}
 	}
 }

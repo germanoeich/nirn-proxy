@@ -1,7 +1,6 @@
 package lib
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -25,9 +24,32 @@ func IsSnowflake(str string) bool {
 	return true
 }
 
+func GetMetricsPath(route string) string {
+	route = GetOptimisticBucketPath(route, "")
+	var path = ""
+	parts := strings.Split(route, "/")
+
+	for _, part := range parts {
+		if part == "" { continue }
+		if IsSnowflake(part) {
+			path += "/!"
+		} else {
+			path += "/" + part
+		}
+	}
+
+	return path
+}
+
 func GetOptimisticBucketPath(url string, method string) string {
 	var bucket = "/"
 	cleanUrl := strings.SplitN(url, "?", 1)[0]
+	if strings.HasPrefix(cleanUrl, "/api/v") {
+		cleanUrl = strings.ReplaceAll(cleanUrl, "/api/v", "")
+		l := len(cleanUrl)
+		i := strings.Index(cleanUrl, "/")
+		cleanUrl = cleanUrl[i+1:l]
+	}
 	parts := strings.Split(cleanUrl, "/")
 	numParts := len(parts)
 
@@ -62,7 +84,7 @@ func GetOptimisticBucketPath(url string, method string) string {
 	}
 
 	if currMajor == MajorUnknown {
-		fmt.Println(parts)
+		//fmt.Println("Unknown major:", parts)
 	}
 
 	// At this point, the major + id part is already accounted for

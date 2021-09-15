@@ -2,6 +2,8 @@ package lib
 
 import (
 	"errors"
+	"github.com/Clever/leakybucket"
+	"github.com/Clever/leakybucket/memory"
 	"net/http"
 	"strconv"
 	"sync"
@@ -18,7 +20,7 @@ const QueueChannelBufferSize = 1000
 type QueueItem struct {
 	Req *http.Request
 	Res *http.ResponseWriter
-	doneChan chan bool
+	doneChan chan *http.Response
 	errChan chan error
 }
 
@@ -26,19 +28,26 @@ type RequestQueue struct {
 	sync.RWMutex
 	// bucket path as key
 	queues map[string]chan *QueueItem
-	buckets map[string]IBucket
-	processor func(item *QueueItem) *http.Header
+	buckets map[string]*Bucket
+	processor func(item *QueueItem) *http.Response
+	globalBucket leakybucket.Bucket
 }
 
-func NewRequestQueue(processor func(item *QueueItem) *http.Header) *RequestQueue {
+func NewRequestQueue(processor func(item *QueueItem) *http.Response, globalLimit uint) *RequestQueue {
+	memStorage := memory.New()
+	globalBucket, err := memStorage.Create("global", globalLimit, 1 * time.Second)
+	if err != nil {
+		panic(err)
+	}
 	return &RequestQueue{
 		queues:    make(map[string]chan *QueueItem),
-		buckets:   make(map[string]IBucket),
+		buckets:   make(map[string]*Bucket),
 		processor: processor,
+		globalBucket: globalBucket,
 	}
 }
 
-func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) {
+func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) (string, *http.Response, error) {
 	q.RLock()
 	path := GetOptimisticBucketPath(req.URL.Path, req.Method)
 	ch, ok := q.queues[path]
@@ -59,81 +68,77 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) {
 		// It's safe to unlock early (before sending to the ch) because the channels are never replaced, only created
 		q.RUnlock()
 	}
-	doneChan := make(chan bool)
+	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
 	ch <- &QueueItem{req, res, doneChan, errChan }
 
 	select {
-	case <-doneChan:
-	case <-errChan:
+	case resp := <-doneChan:
+		return path, resp, nil
+	case err := <-errChan:
+		return path, nil, err
 	}
 }
 
-func (q *RequestQueue) NewQueueMemory(processor func(item *QueueItem) *http.Header) *RequestQueue {
-	return &RequestQueue{
-		queues: make(map[string]chan *QueueItem),
-		buckets: make(map[string]IBucket),
-		processor: processor,
-	}
-}
-
-func parseHeaders(headers *http.Header) (int64, time.Duration, error) {
+func parseHeaders(headers *http.Header) (int64, int64, time.Duration, error) {
 	if headers == nil {
-		return 0, 0, errors.New("null headers")
+		return 0, 0, 0, errors.New("null headers")
 	}
 
 	limit := headers.Get("x-ratelimit-limit")
+	remaining := headers.Get("x-ratelimit-remaining")
 	resetAfter := headers.Get("x-ratelimit-reset-after")
 
 	if limit == "" {
-		return 0, 0, nil
+		return 0, 0, 0, nil
 	}
 
-	limitParsed, errI := strconv.ParseInt(limit, 10, 32)
-	if errI != nil {
-		return 0, 0, errI
+	limitParsed, err := strconv.ParseInt(limit, 10, 32)
+	if err != nil {
+		return 0, 0, 0, err
 	}
 
-	resetParsed, errR := strconv.ParseFloat(resetAfter, 64)
-	if errR != nil {
-		return 0, 0, errR
+	remainingParsed, err := strconv.ParseInt(remaining, 10, 32)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	resetParsed, err := strconv.ParseFloat(resetAfter, 64)
+	if err != nil {
+		return 0, 0, 0, err
 	}
 	// This serves the purpose of keeping the precision of resetAfter.
 	// Since it's a float, converting directly to duration would drop the decimals
 	reset := time.Duration(int(resetParsed * 1000)) * time.Millisecond
 
-	return limitParsed, reset, nil
+	return limitParsed, remainingParsed, reset, nil
 }
 
 func (q *RequestQueue) subscribe(ch chan *QueueItem, path string) {
 	// This function has 1 goroutine for each bucket path
 	// Locking here is not needed
 	for item := range ch {
+	takeGlobal:
+		_, err := q.globalBucket.Add(1)
+		if err != nil {
+			reset := q.globalBucket.Reset()
+			<- time.After(time.Until(reset))
+			goto takeGlobal
+		}
 		bucket, ok := q.buckets[path]
 		if !ok {
-			// This is the first request for this bucket, in this case, we synchronously fire it and wait for headers
-			headers := q.processor(item)
-			limit, resetAfter, err := parseHeaders(headers)
-			if err != nil {
-				item.errChan <- err
-				return
-			}
-			if limit == 0 {
-				bucket := NewNoopBucket()
-				q.buckets[path] = bucket
-			} else {
-				bucket := NewBucket(limit, time.Now().Add(resetAfter))
-				q.buckets[path] = bucket
-			}
-			item.doneChan <- true
-		} else {
-			bucket.Take()
-			headers := q.processor(item)
-			_, resetAfter, err := parseHeaders(headers)
-			if err == nil {
-				bucket.SetResetAt(time.Now().Add(resetAfter))
-			}
-			item.doneChan <- true
+			bucket = NewBucket(1,1, time.Now().Add(5 * time.Second))
+			q.buckets[path] = bucket
 		}
+
+		bucket.Take()
+		resp := q.processor(item)
+		limit, remaining, resetAfter, err := parseHeaders(&resp.Header)
+		if err != nil {
+			item.errChan <- err
+			return
+		}
+		bucket.Update(limit, remaining, time.Now().Add(resetAfter))
+		item.doneChan <- resp
 	}
 }
