@@ -15,7 +15,7 @@ import (
 // While blocking sends aren't a problem in itself, they are unordered, meaning
 // in a high load situation, if this number is too low, it would cause requests to
 // fight to send, which messes up the ordering of requests.
-const QueueChannelBufferSize = 1000
+const QueueChannelBufferSize = 200
 
 type QueueItem struct {
 	Req *http.Request
@@ -24,12 +24,17 @@ type QueueItem struct {
 	errChan chan error
 }
 
+type QueueChannel struct {
+	ch chan *QueueItem
+	lastUsed *time.Time
+}
+
 type RequestQueue struct {
 	sync.RWMutex
-	bucketMu sync.RWMutex
+	channelMu sync.RWMutex
+	sweepTicker *time.Ticker
 	// bucket path as key
-	queues map[string]chan *QueueItem
-	buckets map[string]*Bucket
+	queues map[string]*QueueChannel
 	processor func(item *QueueItem) *http.Response
 	globalBucket leakybucket.Bucket
 }
@@ -40,45 +45,76 @@ func NewRequestQueue(processor func(item *QueueItem) *http.Response, globalLimit
 	if err != nil {
 		panic(err)
 	}
-	return &RequestQueue{
-		queues:    make(map[string]chan *QueueItem),
-		buckets:   make(map[string]*Bucket),
+	ret := &RequestQueue{
+		queues:    make(map[string]*QueueChannel),
 		processor: processor,
 		globalBucket: globalBucket,
+	}
+	go ret.tickSweep()
+	return ret
+}
+func (q *RequestQueue) sweep() {
+	q.Lock()
+	q.channelMu.Lock()
+	defer q.Unlock()
+	defer q.channelMu.Unlock()
+	logger.Info("Sweep start")
+	sweptEntries := 0
+	for key, val := range q.queues {
+		if time.Since(*val.lastUsed) > 5 * time.Minute {
+			logger.Debugf("Deleting %s\n", key)
+			close(val.ch)
+			delete(q.queues, key)
+			sweptEntries++
+		}
+	}
+	logger.Infof("Swept %d entries\n", sweptEntries)
+}
+
+func (q *RequestQueue) tickSweep() {
+	q.sweepTicker = time.NewTicker(5 * time.Minute)
+
+	for _ = range q.sweepTicker.C {
+		q.sweep()
 	}
 }
 
 func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) (string, *http.Response, error) {
-	q.RLock()
 	path := GetOptimisticBucketPath(req.URL.Path, req.Method)
-	ch, ok := q.queues[path]
-	if !ok {
-		q.RUnlock()
-		q.Lock()
-		// Check again to see if the queue channel wasn't created
-		// While we didn't hold the exclusive lock
-		ch, ok = q.queues[path]
-		if !ok {
-			ch = make(chan *QueueItem, QueueChannelBufferSize)
-			q.queues[path] = ch
-			// It's important that we only have 1 goroutine per channel
-			go q.subscribe(ch, path)
-		}
-		q.Unlock()
-	} else {
-		// It's safe to unlock early (before sending to the ch) because the channels are never replaced, only created
-		q.RUnlock()
-	}
+	q.RLock()
+	ch := q.getQueueChannel(path)
+
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
-	ch <- &QueueItem{req, res, doneChan, errChan }
-
+	ch.ch <- &QueueItem{req, res, doneChan, errChan }
+	q.RUnlock()
 	select {
 	case resp := <-doneChan:
 		return path, resp, nil
 	case err := <-errChan:
 		return path, nil, err
 	}
+}
+
+func (q *RequestQueue) getQueueChannel(path string) *QueueChannel {
+	q.channelMu.Lock()
+	defer q.channelMu.Unlock()
+	t := time.Now()
+	ch, ok := q.queues[path]
+	if !ok {
+		// Check again to see if the queue channel wasn't created
+		// While we didn't hold the exclusive lock
+		ch, ok = q.queues[path]
+		if !ok {
+			ch = &QueueChannel{ make(chan *QueueItem, QueueChannelBufferSize), &t }
+			q.queues[path] = ch
+			// It's important that we only have 1 goroutine per channel
+			go q.subscribe(ch, path)
+		}
+	} else {
+		ch.lastUsed = &t
+	}
+	return ch
 }
 
 func parseHeaders(headers *http.Header) (int64, int64, time.Duration, error) {
@@ -115,40 +151,30 @@ func parseHeaders(headers *http.Header) (int64, int64, time.Duration, error) {
 	return limitParsed, remainingParsed, reset, nil
 }
 
-func (q *RequestQueue) subscribe(ch chan *QueueItem, path string) {
+func (q *RequestQueue) takeGlobal() {
+takeGlobal:
+	_, err := q.globalBucket.Add(1)
+	if err != nil {
+		reset := q.globalBucket.Reset()
+		<- time.After(time.Until(reset))
+		goto takeGlobal
+	}
+}
+
+func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 	// This function has 1 goroutine for each bucket path
 	// Locking here is not needed
-	for item := range ch {
-	takeGlobal:
-		_, err := q.globalBucket.Add(1)
-		if err != nil {
-			reset := q.globalBucket.Reset()
-			<- time.After(time.Until(reset))
-			goto takeGlobal
-		}
-		q.bucketMu.RLock()
-		bucket, ok := q.buckets[path]
-		if !ok {
-			q.bucketMu.RUnlock()
-			q.bucketMu.Lock()
-			bucket, ok = q.buckets[path]
-			if !ok {
-				bucket = NewBucket(1, 1, time.Now().Add(5*time.Second))
-				q.buckets[path] = bucket
-			}
-			q.bucketMu.Unlock()
-		} else {
-			q.bucketMu.RUnlock()
-		}
-
-		bucket.Take()
+	for item := range ch.ch {
+		q.takeGlobal()
 		resp := q.processor(item)
-		limit, remaining, resetAfter, err := parseHeaders(&resp.Header)
+		_, remaining, resetAfter, err := parseHeaders(&resp.Header)
 		if err != nil {
 			item.errChan <- err
 			return
 		}
-		bucket.Update(limit, remaining, time.Now().Add(resetAfter))
 		item.doneChan <- resp
+		if remaining == 0 {
+			time.Sleep(time.Until(time.Now().Add(resetAfter)))
+		}
 	}
 }
