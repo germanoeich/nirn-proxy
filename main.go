@@ -30,7 +30,6 @@ var queueMu = sync.Mutex{}
 
 type GenericHandler struct{}
 func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
-	logger.WithFields(logrus.Fields{"method": req.Method, "path": req.URL.String()}).Debug("Request in")
 	// No token will work and fall under "" on the map
 	token := req.Header.Get("Authorization")
 	_, isInvalid := invalidTokens[token]
@@ -187,13 +186,7 @@ func process(item *lib.QueueItem) *http.Response {
 		return nil
 	}
 
-	e := logger.WithFields(logrus.Fields{"method": req.Method, "path": req.URL.String(), "status": discordResp.Status})
-
-	if discordResp.StatusCode == 429 {
-		e.Warn("429")
-	} else {
-		e.Info("Discord request")
-	}
+	logger.WithFields(logrus.Fields{"method": req.Method, "path": req.URL.String(), "status": discordResp.Status}).Debug("Discord request")
 
 	body, err := ioutil.ReadAll(discordResp.Body)
 	if err != nil {

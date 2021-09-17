@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/Clever/leakybucket"
 	"github.com/Clever/leakybucket/memory"
+	"github.com/sirupsen/logrus"
 	"net/http"
 	"strconv"
 	"sync"
@@ -68,7 +69,7 @@ func (q *RequestQueue) sweep() {
 			sweptEntries++
 		}
 	}
-	logger.Infof("Swept %d entries\n", sweptEntries)
+	logger.WithFields(logrus.Fields{"sweptEntries": sweptEntries}).Info("Finished sweep")
 }
 
 func (q *RequestQueue) tickSweep() {
@@ -164,17 +165,35 @@ takeGlobal:
 func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 	// This function has 1 goroutine for each bucket path
 	// Locking here is not needed
+
+	//Only used for logging
+	var prevRem int64 = 0
+	var prevReset time.Duration = 0
 	for item := range ch.ch {
 		q.takeGlobal()
 		resp := q.processor(item)
 		_, remaining, resetAfter, err := parseHeaders(&resp.Header)
+
 		if err != nil {
 			item.errChan <- err
-			return
+			continue
 		}
 		item.doneChan <- resp
+
+		if resp.StatusCode == 429 {
+			logger.WithFields(logrus.Fields{
+				"prevRemaining": prevRem,
+				"prevResetAfter": prevReset,
+				"remaining": remaining,
+				"resetAfter": resetAfter,
+				"bucket": path,
+				"route": item.Req.URL.String(),
+				"method": item.Req.Method,
+			}).Warn("Unexpected 429")
+		}
 		if remaining == 0 {
 			time.Sleep(time.Until(time.Now().Add(resetAfter)))
 		}
+		prevRem, prevReset = remaining, resetAfter
 	}
 }
