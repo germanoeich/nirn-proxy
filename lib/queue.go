@@ -7,6 +7,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -62,8 +63,7 @@ func (q *RequestQueue) sweep() {
 	logger.Info("Sweep start")
 	sweptEntries := 0
 	for key, val := range q.queues {
-		if time.Since(*val.lastUsed) > 5 * time.Minute {
-			logger.Debugf("Deleting %s\n", key)
+		if time.Since(*val.lastUsed) > 10 * time.Minute {
 			close(val.ch)
 			delete(q.queues, key)
 			sweptEntries++
@@ -162,6 +162,26 @@ takeGlobal:
 	}
 }
 
+func return404webhook(item *QueueItem) {
+	res := *item.Res
+	res.WriteHeader(404)
+	body := "{\n  \"message\": \"Unknown Webhook\",\n  \"code\": 10015\n}"
+	_, err := res.Write([]byte(body))
+	if err != nil {
+		return
+	}
+}
+
+func isInteraction(url string) bool {
+	parts := strings.Split(strings.SplitN(url, "?", 1)[0], "/")
+	for _, p := range parts {
+		if len(p) > 128 {
+			return true
+		}
+	}
+	return false
+}
+
 func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 	// This function has 1 goroutine for each bucket path
 	// Locking here is not needed
@@ -169,8 +189,18 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 	//Only used for logging
 	var prevRem int64 = 0
 	var prevReset time.Duration = 0
+
+	// Fail fast path for webhook 404s
+	var ret404 = false
 	for item := range ch.ch {
 		q.takeGlobal()
+
+		if ret404 {
+			return404webhook(item)
+			item.doneChan <- nil
+			continue
+		}
+
 		resp := q.processor(item)
 		_, remaining, resetAfter, err := parseHeaders(&resp.Header)
 
@@ -190,6 +220,15 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 				"route": item.Req.URL.String(),
 				"method": item.Req.Method,
 			}).Warn("Unexpected 429")
+		}
+
+		if resp.StatusCode == 404 && strings.HasPrefix(path, "/webhooks/") && !isInteraction(item.Req.URL.String()) {
+			logger.WithFields(logrus.Fields{
+				"bucket": path,
+				"route": item.Req.URL.String(),
+				"method": item.Req.Method,
+			}).Info("Setting fail fast 404 for webhook")
+			ret404 = true
 		}
 		if remaining == 0 {
 			time.Sleep(time.Until(time.Now().Add(resetAfter)))
