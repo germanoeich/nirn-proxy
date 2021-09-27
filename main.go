@@ -10,7 +10,6 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -131,16 +130,10 @@ func copyHeader(dst, src http.Header) {
 }
 
 func doDiscordReq(path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
-	discordReq := &http.Request{
-		Method:           method,
-		URL:              &url.URL{
-			Scheme:      "https",
-			Host:        "discord.com",
-			Path:        path,
-			RawQuery:    query,
-		},
-		Body: body,
-		Header: header,
+	discordReq, err := http.NewRequest(method, "https://discord.com" + path + "?" + query, body)
+	discordReq.Header = header
+	if err != nil {
+		return nil, err
 	}
 
 	token := discordReq.Header.Get("Authorization")
@@ -152,7 +145,7 @@ func doDiscordReq(path string, method string, body io.ReadCloser, header http.He
 		status := discordResp.Status
 		method := discordResp.Request.Method
 		elapsed := time.Since(startTime).Seconds()
-		lib.RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": clientId}).Observe(elapsed)
+		lib.RequestSummary.With(map[string]string{"route": route, "status": status, "method": method, "clientId": clientId}).Observe(elapsed)
 	}
 	return discordResp, err
 }
