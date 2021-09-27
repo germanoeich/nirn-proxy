@@ -1,0 +1,25 @@
+stages:
+  - docker
+  - deploy
+
+build docker:
+  stage: docker
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor --context $CI_PROJECT_DIR --dockerfile $CI_PROJECT_DIR/Dockerfile --destination $CI_REGISTRY_IMAGE/$CI_COMMIT_BRANCH:$CI_COMMIT_SHORT_SHA
+
+deploy to prod kube:
+  stage: deploy
+  image:
+    name: bitnami/kubectl:latest
+    entrypoint: [""]
+  script:
+    - kubectl --kubeconfig="$KUBE_CONFIG" get deployment nirn-proxy -n rest-proxy -o yaml | sed -E -e "s/(registry\.gitlab\.com\/dyno1\/.*\/).*:[a-z0-9]*/\1$CI_COMMIT_BRANCH:$CI_COMMIT_SHORT_SHA/gm" | kubectl --kubeconfig="$KUBE_CONFIG" apply -f -
+  only:
+    - main
