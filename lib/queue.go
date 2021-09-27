@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,8 +34,9 @@ type QueueChannel struct {
 
 type RequestQueue struct {
 	sync.RWMutex
-	channelMu sync.RWMutex
-	sweepTicker *time.Ticker
+	channelMu         sync.Mutex
+	globalLockedUntil *int64
+	sweepTicker       *time.Ticker
 	// bucket path as key
 	queues map[string]*QueueChannel
 	processor func(item *QueueItem) *http.Response
@@ -48,9 +50,10 @@ func NewRequestQueue(processor func(item *QueueItem) *http.Response, globalLimit
 		panic(err)
 	}
 	ret := &RequestQueue{
-		queues:    make(map[string]*QueueChannel),
-		processor: processor,
-		globalBucket: globalBucket,
+		queues:            make(map[string]*QueueChannel),
+		processor:         processor,
+		globalBucket:      globalBucket,
+		globalLockedUntil: new(int64),
 	}
 	go ret.tickSweep()
 	return ret
@@ -118,46 +121,63 @@ func (q *RequestQueue) getQueueChannel(path string) *QueueChannel {
 	return ch
 }
 
-func parseHeaders(headers *http.Header) (int64, int64, time.Duration, error) {
+func parseHeaders(headers *http.Header) (int64, int64, time.Duration, bool, error) {
 	if headers == nil {
-		return 0, 0, 0, errors.New("null headers")
+		return 0, 0, 0, false, errors.New("null headers")
 	}
 
 	limit := headers.Get("x-ratelimit-limit")
 	remaining := headers.Get("x-ratelimit-remaining")
 	resetAfter := headers.Get("x-ratelimit-reset-after")
+	if resetAfter == "" {
+		// Globals return no x-ratelimit-reset-after headers, this is the best option without parsing the body
+		resetAfter = headers.Get("retry-after")
+	}
+	isGlobal := headers.Get("x-ratelimit-global") == "true"
+
+	resetParsed, err := strconv.ParseFloat(resetAfter, 64)
+	if err != nil {
+		return 0, 0, 0, false, err
+	}
+
+	// Convert to MS instead of seconds to preserve decimal precision
+	reset := time.Duration(int(resetParsed * 1000)) * time.Millisecond
+
+	if isGlobal {
+		return 0, 0, reset, isGlobal, nil
+	}
 
 	if limit == "" {
-		return 0, 0, 0, nil
+		return 0, 0, 0, false, nil
 	}
 
 	limitParsed, err := strconv.ParseInt(limit, 10, 32)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, false, err
 	}
 
 	remainingParsed, err := strconv.ParseInt(remaining, 10, 32)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, false, err
 	}
 
-	resetParsed, err := strconv.ParseFloat(resetAfter, 64)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	// This serves the purpose of keeping the precision of resetAfter.
-	// Since it's a float, converting directly to duration would drop the decimals
-	reset := time.Duration(int(resetParsed * 1000)) * time.Millisecond
-
-	return limitParsed, remainingParsed, reset, nil
+	return limitParsed, remainingParsed, reset, isGlobal, nil
 }
 
 func (q *RequestQueue) takeGlobal() {
 takeGlobal:
+	waitTime := atomic.LoadInt64(q.globalLockedUntil)
+	if waitTime > 0 {
+		time.Sleep(time.Until(time.Unix(0, waitTime)))
+		sw := atomic.CompareAndSwapInt64(q.globalLockedUntil, waitTime, 0)
+		if sw {
+			logger.Info("Unlocked global bucket")
+		}
+	}
 	_, err := q.globalBucket.Add(1)
 	if err != nil {
 		reset := q.globalBucket.Reset()
-		<- time.After(time.Until(reset))
+		time.Sleep(time.Until(reset))
 		goto takeGlobal
 	}
 }
@@ -202,7 +222,18 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 		}
 
 		resp := q.processor(item)
-		_, remaining, resetAfter, err := parseHeaders(&resp.Header)
+		_, remaining, resetAfter, isGlobal, err := parseHeaders(&resp.Header)
+
+		if isGlobal {
+			//Lock global
+			sw := atomic.CompareAndSwapInt64(q.globalLockedUntil, 0, time.Now().Add(resetAfter).UnixNano())
+			if sw {
+				logger.WithFields(logrus.Fields{
+					"until": time.Now().Add(resetAfter),
+					"resetAfter": resetAfter,
+				}).Info("Global reached, locking")
+			}
+		}
 
 		if err != nil {
 			item.errChan <- err
@@ -219,6 +250,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 				"bucket": path,
 				"route": item.Req.URL.String(),
 				"method": item.Req.Method,
+				"isGlobal": isGlobal,
 			}).Warn("Unexpected 429")
 		}
 
@@ -230,7 +262,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 			}).Info("Setting fail fast 404 for webhook")
 			ret404 = true
 		}
-		if remaining == 0 {
+		if remaining == 0 || resp.StatusCode == 429 {
 			time.Sleep(time.Until(time.Now().Add(resetAfter)))
 		}
 		prevRem, prevReset = remaining, resetAfter
