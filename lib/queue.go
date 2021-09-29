@@ -135,13 +135,18 @@ func parseHeaders(headers *http.Header) (int64, int64, time.Duration, bool, erro
 	}
 	isGlobal := headers.Get("x-ratelimit-global") == "true"
 
-	resetParsed, err := strconv.ParseFloat(resetAfter, 64)
-	if err != nil {
-		return 0, 0, 0, false, err
-	}
+	var resetParsed float64
+	var reset time.Duration
+	var err error
+	if resetAfter != "" {
+		resetParsed, err = strconv.ParseFloat(resetAfter, 64)
+		if err != nil {
+			return 0, 0, 0, false, err
+		}
 
-	// Convert to MS instead of seconds to preserve decimal precision
-	reset := time.Duration(int(resetParsed * 1000)) * time.Millisecond
+		// Convert to MS instead of seconds to preserve decimal precision
+		reset = time.Duration(int(resetParsed * 1000)) * time.Millisecond
+	}
 
 	if isGlobal {
 		return 0, 0, reset, isGlobal, nil
