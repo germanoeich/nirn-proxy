@@ -2,6 +2,7 @@ package lib
 
 import (
 	"strings"
+	"time"
 )
 
 const (
@@ -89,12 +90,25 @@ func GetOptimisticBucketPath(url string, method string) string {
 
 	// At this point, the major + id part is already accounted for
 	// In this loop, we only need to strip all remaining snowflakes, emoji names and webhook tokens(optional)
-	for _, part := range parts[2:] {
+	for idx, part := range parts[2:] {
 		if IsSnowflake(part) {
+			// Custom rule for messages older than 14d
+			if currMajor == MajorChannels && parts[idx - 1] == "messages" && method == "DELETE" {
+				createdAt, _ := GetSnowflakeCreatedAt(part)
+				if createdAt.Before(time.Now().Add(-1 * 14 * 24 * time.Hour)) {
+					bucket += "/!14dmsg"
+				}
+				continue
+			}
 			bucket += "/!"
 		} else {
 			if currMajor == MajorChannels && part == "reactions" {
-				//All reaction stuff falls under the same bucket, so it's irrelevant if the user
+				// reaction put/delete fall under a different bucket from other reaction endpoints
+				if method == "PUT" || method == "DELETE" {
+					bucket += "/reactions/!modify"
+					break
+				}
+				//All other reaction endpoints falls under the same bucket, so it's irrelevant if the user
 				//is passing userid, emoji, etc.
 				bucket += "/reactions/!/!"
 				//Reactions can only be followed by emoji/userid combo, since we don't care, break
@@ -104,7 +118,7 @@ func GetOptimisticBucketPath(url string, method string) string {
 			// Strip webhook tokens and interaction tokens
 			if (currMajor == MajorWebhooks || currMajor == MajorInteractions) && len(part) >= 64 {
 				bucket += "/!"
-				break
+				continue
 			}
 			bucket += "/" + part
 		}
