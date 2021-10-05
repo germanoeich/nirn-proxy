@@ -195,8 +195,6 @@ func process(item *lib.QueueItem) *http.Response {
 	_, err = res.Write(body)
 	if err != nil {
 		logger.Error(err)
-		res.WriteHeader(500)
-		_, _ = res.Write([]byte(err.Error()))
 		return nil
 	}
 

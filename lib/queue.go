@@ -227,6 +227,10 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 		}
 
 		resp := q.processor(item)
+		if resp == nil {
+			item.errChan <- errors.New("invalid HTTP response from process()")
+			continue
+		}
 		_, remaining, resetAfter, isGlobal, err := parseHeaders(&resp.Header)
 
 		if isGlobal {
