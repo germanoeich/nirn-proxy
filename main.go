@@ -71,8 +71,6 @@ func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) 
 		lib.ErrorCounter.Inc()
 		return
 	}
-
-	return
 }
 
 func getBotGlobalLimit(token string) (uint, error) {
@@ -96,7 +94,7 @@ func getBotGlobalLimit(token string) (uint, error) {
 		return 0, errors.New("500 on gateway/bot")
 	}
 
-	body, err := ioutil.ReadAll(bot.Body)
+	body, _ := ioutil.ReadAll(bot.Body)
 
 	var s BotGatewayResponse
 
@@ -160,8 +158,9 @@ func getBotId(token string) string {
 		token, err := base64.StdEncoding.DecodeString(token)
 		if err != nil {
 			clientId = "Unknown"
+		} else {
+			clientId = string(token)
 		}
-		clientId = string(token)
 	}
 	return clientId
 }
@@ -179,7 +178,13 @@ func process(item *lib.QueueItem) *http.Response {
 		return nil
 	}
 
-	logger.WithFields(logrus.Fields{"method": req.Method, "path": req.URL.String(), "status": discordResp.Status}).Debug("Discord request")
+	logger.WithFields(logrus.Fields{
+		"method": req.Method,
+		"path": req.URL.String(),
+		"status": discordResp.Status,
+		// TODO: Remove this when 429s are not a problem anymore
+		"discordBucket": discordResp.Header.Get("x-ratelimit-bucket"),
+	}).Debug("Discord request")
 
 	body, err := ioutil.ReadAll(discordResp.Body)
 	if err != nil {

@@ -78,7 +78,7 @@ func (q *RequestQueue) sweep() {
 func (q *RequestQueue) tickSweep() {
 	q.sweepTicker = time.NewTicker(5 * time.Minute)
 
-	for _ = range q.sweepTicker.C {
+	for range q.sweepTicker.C {
 		q.sweep()
 	}
 }
@@ -240,7 +240,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 				logger.WithFields(logrus.Fields{
 					"until": time.Now().Add(resetAfter),
 					"resetAfter": resetAfter,
-				}).Info("Global reached, locking")
+				}).Warn("Global reached, locking")
 			}
 		}
 
@@ -260,6 +260,8 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 				"route": item.Req.URL.String(),
 				"method": item.Req.Method,
 				"isGlobal": isGlobal,
+				// TODO: Remove this when 429s are not a problem anymore
+				"discordBucket": resp.Header.Get("x-ratelimit-bucket"),
 			}).Warn("Unexpected 429")
 		}
 
