@@ -27,6 +27,16 @@ func IsSnowflake(str string) bool {
 	return true
 }
 
+func IsNumericInput(str string) bool {
+	l := len(str)
+	for _, d := range str {
+		if d < '0' || d > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func GetMetricsPath(route string) string {
 	route = GetOptimisticBucketPath(route, "")
 	var path = ""
@@ -38,7 +48,7 @@ func GetMetricsPath(route string) string {
 
 	for _, part := range parts {
 		if part == "" { continue }
-		if IsSnowflake(part) {
+		if IsNumericInput(part) {
 			path += "/!"
 		} else {
 			path += "/" + part
@@ -80,9 +90,11 @@ func GetOptimisticBucketPath(url string, method string) string {
 		bucket += MajorInvites + "/!"
 		currMajor = MajorInvites
 	case MajorGuilds:
+		/* TODO: Figure out why this makes the bot unresponsive
 		if numParts == 3 && parts[2] == "channels" {
 			return "/guilds/!/channels"
 		}
+		*/
 		fallthrough
 	case MajorWebhooks:
 		fallthrough
