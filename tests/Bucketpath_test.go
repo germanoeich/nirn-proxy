@@ -11,7 +11,7 @@ func TestPaths(t *testing.T) {
 		path, method, want string
 	}{
 		// Guild Major
-		{"/api/v9/guilds/203039963636301824", "GET", "/guilds/203039963636301824"},
+		{"/api/v9/guilds/103039963636301824", "GET", "/guilds/103039963636301824"},
 		// Channel major
 		{"/api/v8/channels/203039963636301824", "GET", "/channels/!"},
 		{"/api/v7/channels/203039963636301824/pins", "GET", "/channels/203039963636301824/pins"},
@@ -23,10 +23,12 @@ func TestPaths(t *testing.T) {
 		// Invites major
 		{"/api/v9/invites/dyno", "GET", "/invites/!"},
 		// Interactions major
-		{"/api/v9/interactions/203039963636301824/aW50ZXJhY3Rpb246ODg3NTU5MDA01AY4NTUxNDU0OnZwS3QycDhvREk2aVF3U1BqN2prcXBkRmNqNlp4VEhGRjZvSVlXSGh4WG4yb3l6Z3B6NTBPNVc3OHphV05OULLMOHBMa2RTZmVKd3lzVDA2b2h3OTUxaFJ4QlN0dkxXallPcmhnSHNJb0tSV0M5ZzY1NkN4VGRvemFOSHY4b05c/callback", "GET", "/interactions/203039963636301824/!"},
+		{"/api/v9/interactions/203039963636301824/aW50ZXJhY3Rpb246ODg3NTU5MDA01AY4NTUxNDU0OnZwS3QycDhvREk2aVF3U1BqN2prcXBkRmNqNlp4VEhGRjZvSVlXSGh4WG4yb3l6Z3B6NTBPNVc3OHphV05OULLMOHBMa2RTZmVKd3lzVDA2b2h3OTUxaFJ4QlN0dkxXallPcmhnSHNJb0tSV0M5ZzY1NkN4VGRvemFOSHY4b05c/callback", "GET", "/interactions/203039963636301824/!/callback"},
 		// No known major
 		{"/api/v9/invalid/203039963636301824", "GET", "/invalid/203039963636301824"},
 		{"/api/v9/invalid/203039963636301824/route/203039963636301824", "GET", "/invalid/203039963636301824/route/!"},
+		//Special case for /guilds/:id/channels
+		{"/api/v9/guilds/203039963636301824/channels", "GET", "/guilds/!/channels"},
 	}
 	for _, tt := range tests {
 		testname := fmt.Sprintf("%s-%s", tt.method, tt.path)

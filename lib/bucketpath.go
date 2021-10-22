@@ -32,6 +32,10 @@ func GetMetricsPath(route string) string {
 	var path = ""
 	parts := strings.Split(route, "/")
 
+	if strings.HasPrefix(route, "/invite/!") {
+		return "/invite/!"
+	}
+
 	for _, part := range parts {
 		if part == "" { continue }
 		if IsSnowflake(part) {
@@ -76,6 +80,9 @@ func GetOptimisticBucketPath(url string, method string) string {
 		bucket += MajorInvites + "/!"
 		currMajor = MajorInvites
 	case MajorGuilds:
+		if numParts == 3 && parts[2] == "channels" {
+			return "/guilds/!/channels"
+		}
 		fallthrough
 	case MajorWebhooks:
 		fallthrough
