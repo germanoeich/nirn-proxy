@@ -28,7 +28,6 @@ func IsSnowflake(str string) bool {
 }
 
 func IsNumericInput(str string) bool {
-	l := len(str)
 	for _, d := range str {
 		if d < '0' || d > '9' {
 			return false

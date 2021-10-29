@@ -262,6 +262,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 				"isGlobal": isGlobal,
 				// TODO: Remove this when 429s are not a problem anymore
 				"discordBucket": resp.Header.Get("x-ratelimit-bucket"),
+				"ratelimitScope": resp.Header.Get("x-ratelimit-scope"),
 			}).Warn("Unexpected 429")
 		}
 

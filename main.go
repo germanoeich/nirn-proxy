@@ -207,9 +207,9 @@ func process(item *lib.QueueItem) *http.Response {
 }
 
 func main()  {
-	lib.SetLogger(logger)
-	logger.SetLevel(logrus.DebugLevel)
+	logger.SetLevel(logrus.InfoLevel)
 	logger.Info("Starting proxy")
+	lib.SetLogger(logger)
 	client = &http.Client{}
 	s := &http.Server{
 		Addr:           ":8080",
