@@ -154,6 +154,7 @@ func getBotId(token string) string {
 		clientId = "NoAuth"
 	} else {
 		token = strings.ReplaceAll(token, "Bot ", "")
+		token = strings.ReplaceAll(token, "Bearer ", "")
 		token = strings.Split(token, ".")[0]
 		token, err := base64.StdEncoding.DecodeString(token)
 		if err != nil {
