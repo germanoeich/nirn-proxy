@@ -37,8 +37,8 @@ type RequestQueue struct {
 	channelMu         sync.Mutex
 	globalLockedUntil *int64
 	sweepTicker       *time.Ticker
-	// bucket path as key
-	queues map[string]*QueueChannel
+	// bucket path hash as key
+	queues map[uint64]*QueueChannel
 	processor func(item *QueueItem) *http.Response
 	globalBucket leakybucket.Bucket
 }
@@ -50,7 +50,7 @@ func NewRequestQueue(processor func(item *QueueItem) *http.Response, globalLimit
 		panic(err)
 	}
 	ret := &RequestQueue{
-		queues:            make(map[string]*QueueChannel),
+		queues:            make(map[uint64]*QueueChannel),
 		processor:         processor,
 		globalBucket:      globalBucket,
 		globalLockedUntil: new(int64),
@@ -101,19 +101,20 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) (strin
 }
 
 func (q *RequestQueue) getQueueChannel(path string) *QueueChannel {
+	pathHash := HashCRC64(path)
 	q.channelMu.Lock()
 	defer q.channelMu.Unlock()
 	t := time.Now()
-	ch, ok := q.queues[path]
+	ch, ok := q.queues[pathHash]
 	if !ok {
 		// Check again to see if the queue channel wasn't created
 		// While we didn't hold the exclusive lock
-		ch, ok = q.queues[path]
+		ch, ok = q.queues[pathHash]
 		if !ok {
 			ch = &QueueChannel{ make(chan *QueueItem, QueueChannelBufferSize), &t }
-			q.queues[path] = ch
+			q.queues[pathHash] = ch
 			// It's important that we only have 1 goroutine per channel
-			go q.subscribe(ch, path)
+			go q.subscribe(ch, path, pathHash)
 		}
 	} else {
 		ch.lastUsed = &t
@@ -207,7 +208,7 @@ func isInteraction(url string) bool {
 	return false
 }
 
-func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
+func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64) {
 	// This function has 1 goroutine for each bucket path
 	// Locking here is not needed
 
@@ -260,6 +261,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string) {
 				"route": item.Req.URL.String(),
 				"method": item.Req.Method,
 				"isGlobal": isGlobal,
+				"pathHash": pathHash,
 				// TODO: Remove this when 429s are not a problem anymore
 				"discordBucket": resp.Header.Get("x-ratelimit-bucket"),
 				"ratelimitScope": resp.Header.Get("x-ratelimit-scope"),
