@@ -115,6 +115,8 @@ func GetOptimisticBucketPath(url string, method string) string {
 				createdAt, _ := GetSnowflakeCreatedAt(part)
 				if createdAt.Before(time.Now().Add(-1 * 14 * 24 * time.Hour)) {
 					bucket += "/!14dmsg"
+				} else if createdAt.After(time.Now().Add(-1 * 10 * time.Second)) {
+					bucket += "/!10smsg"
 				}
 				continue
 			}
