@@ -5,6 +5,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"net/http"
+	"os"
 )
 
 var (
@@ -21,10 +22,14 @@ var (
 )
 
 func StartMetrics() {
+	port := os.Getenv("METRICS_PORT")
+	if port == "" {
+		port = "9000"
+	}
 	prometheus.MustRegister(RequestSummary)
 	http.Handle("/metrics", promhttp.Handler())
 	logger.Info("Starting metrics server")
-	err := http.ListenAndServe(":9000", nil)
+	err := http.ListenAndServe(":" + port, nil)
 	if err != nil {
 		logger.Error(err)
 		return

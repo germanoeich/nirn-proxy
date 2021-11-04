@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # build and publish in parallel: linux/386, linux/amd64, windows/386, windows/amd64, darwin/amd64 
         goos: [linux, windows]
         goarch: ["386", amd64, arm]
     steps:
@@ -21,4 +20,3 @@ jobs:
         goos: ${{ matrix.goos }}
         goarch: ${{ matrix.goarch }}
         binary_name: "nirn-proxy"
-        extra_files: LICENSE README.md

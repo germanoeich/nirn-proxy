@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -208,19 +209,34 @@ func process(item *lib.QueueItem) *http.Response {
 }
 
 func main()  {
-	logger.SetLevel(logrus.InfoLevel)
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
+	}
+	lvl, err := logrus.ParseLevel(logLevel)
+
+	if err != nil {
+		panic("Failed to parse log level")
+	}
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	logger.SetLevel(lvl)
 	logger.Info("Starting proxy")
 	lib.SetLogger(logger)
 	client = &http.Client{}
 	s := &http.Server{
-		Addr:           ":8080",
+		Addr:           ":" + port,
 		Handler:        &GenericHandler{},
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   1 * time.Hour,
 		MaxHeaderBytes: 1 << 20,
 	}
 	go lib.StartMetrics()
-	err := s.ListenAndServe()
+	err = s.ListenAndServe()
 	if err != nil {
 		panic(err)
 	}
