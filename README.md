@@ -1,5 +1,5 @@
 # Nirn-proxy
-Nirn is a transparent & dynamic HTTP proxy that handles Discord ratelimits for you and exports meaningful prometheus metrics. It is considered beta software but is being used in production by [Dyno](https://dyno.gg) on the scaled of hundreds of requests per second.
+Nirn is a transparent & dynamic HTTP proxy that handles Discord ratelimits for you and exports meaningful prometheus metrics. It is considered beta software but is being used in production by [Dyno](https://dyno.gg) on the scale of hundreds of requests per second.
 
 #### Features
 - Transparent ratelimit handling, per-route and global
@@ -13,22 +13,27 @@ Nirn is a transparent & dynamic HTTP proxy that handles Discord ratelimits for y
 ### Usage
 Binaries can be found [here](https://github.com/germanoeich/nirn-proxy/releases). Docker images can be found [here](https://github.com/germanoeich/nirn-proxy/pkgs/container/nirn-proxy)
 
-The proxy sits between the client and discord. Essentially, instead of pointing to discord.com, you point to whatever IP and port the proxy is running on, so discord.com/api/v9/gateway becomes 10.0.0.1:8080/apí/v9/gateway. This can be achieved in many ways, some suggestions are host remapping on the OS level, DNS overrides or changes to the library code. Please note that the proxy currently does not support SSL.
+The proxy sits between the client and discord. Essentially, instead of pointing to discord.com, you point to whatever IP and port the proxy is running on, so discord.com/api/v9/gateway becomes 10.0.0.1:8080/api/v9/gateway. This can be achieved in many ways, some suggestions are host remapping on the OS level, DNS overrides or changes to the library code. Please note that the proxy currently does not support SSL.
 
 Configuration options are
 
-| Variable    | Value  |
-|-------------|--------|
-| LOG_LEVEL   | panic, fatal, error, warn, info, debug, trace |
-| PORT        | number |
-| METRICS_PORT| number |
+| Variable    | Value  | Default |
+|-------------|--------|---------|
+| LOG_LEVEL   | panic, fatal, error, warn, info, debug, trace | info |
+| PORT        | number | 8080    |
+| METRICS_PORT| number | 9000    |
+| ENABLE_METRICS| boolean| true   |
+| ENABLE_PPROF| boolean| false   |
 
+.env files are loaded if present
 
 ### Behaviour
 
 The proxy listens on all routes and relays them to Discord, while keeping track of ratelimit buckets and holding requests if there are no tokens to spare. The proxy fires requests sequentially for each bucket and ordering is preserved. The proxy does not modify the requests in any way so any library compatible with Discords API can be pointed at the proxy and it will not break the library, even with the libraries own ratelimiting intact.
 
 When using the proxy, it is safe to remove the ratelimiting logic from clients and fire requests instantly, however, the proxy does not handle retries. If for some reason (i.e shared ratelimits, internal discord ratelimits, etc) the proxy encounters a 429, it will return that to the client. It is safe to immediately retry requests that return 429 or even setup retry logic elsewhere (like in a load balancer or service mesh).
+
+The proxy also guards against known scenarios that might cause a cloudflare ban, like too webhook 404s or too many 401s.
 
 ### Limitations
 
@@ -50,6 +55,10 @@ This will vary depending on your usage, how many unique routes you see, etc. For
 |-------------------|----------------------------------------|------------------------------------------------|
 |nirn_proxy_error   | none                                   | Counter for errors                             |
 |nirn_proxy_requests| method, status, route, clientId        | Summary that keeps track of all request metrics|
+
+### Profiling
+
+The proxy can be profiled at runtime by enabling the ENABLE_PPROF flag and browsing to `http://ip:7654/debug/pprof/`
 
 ##### Acknowledgements
 - [Eris](https://github.com/abalabahaha/eris) - used as reference throughout this project
