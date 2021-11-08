@@ -24,6 +24,7 @@ Configuration options are
 | METRICS_PORT| number | 9000    |
 | ENABLE_METRICS| boolean| true   |
 | ENABLE_PPROF| boolean| false   |
+| BUFFER_SIZE [(?)](https://github.com/germanoeich/nirn-proxy/blob/main/lib/queue.go#L37-L43) | number | 50      |
 
 .env files are loaded if present
 
@@ -55,6 +56,8 @@ This will vary depending on your usage, how many unique routes you see, etc. For
 |-------------------|----------------------------------------|------------------------------------------------|
 |nirn_proxy_error   | none                                   | Counter for errors                             |
 |nirn_proxy_requests| method, status, route, clientId        | Summary that keeps track of all request metrics|
+
+Note: 429s can produce two status: 429 Too Many Requests or 429 Shared. The latter is only produced for requests that return with the x-ratelimit-scope header set to "shared", which means they don't count towards the cloudflare firewall limit and thus should not be used for alerts, etc.
 
 ### Profiling
 

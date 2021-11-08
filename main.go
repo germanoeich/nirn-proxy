@@ -6,6 +6,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ var queues = make(map[string]*lib.RequestQueue)
 // Store invalid tokens to prevent a storm when a token gets reset
 var invalidTokens = make(map[string]bool)
 var queueMu = sync.Mutex{}
+var bufferSize int64 = 50
 
 type GenericHandler struct{}
 func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
@@ -51,9 +53,9 @@ func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) 
 				queueMu.Unlock()
 				return
 			}
-			q = lib.NewRequestQueue(lib.ProcessRequest, limit)
+			q = lib.NewRequestQueue(lib.ProcessRequest, limit, bufferSize)
 			clientId := lib.GetBotId(token)
-			logger.WithFields(logrus.Fields{ "globalLimit": limit, "clientId": clientId }).Info("Created new queue")
+			logger.WithFields(logrus.Fields{ "globalLimit": limit, "clientId": clientId, "bufferSize": bufferSize }).Info("Created new queue")
 			queues[token] = q
 		}
 		queueMu.Unlock()
@@ -104,6 +106,17 @@ func main()  {
 			port = "9000"
 		}
 		go lib.StartMetrics(port)
+	}
+
+	bufferEnv := os.Getenv("BUFFER_SIZE")
+	if bufferEnv != "" {
+		parsedSize, err := strconv.ParseInt(bufferEnv, 10, 64)
+		if err != nil {
+			logger.Error(err)
+			logger.Warn("Failed to parse buffer size, using default")
+		} else {
+			bufferSize = parsedSize
+		}
 	}
 
 	err = s.ListenAndServe()

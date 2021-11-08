@@ -13,13 +13,6 @@ import (
 	"time"
 )
 
-// QueueChannelBufferSize Defines the size of the request channel buffer for each bucket
-// Realistically, this should be as high as possible to prevent blocking sends
-// While blocking sends aren't a problem in itself, they are unordered, meaning
-// in a high load situation, if this number is too low, it would cause requests to
-// fight to send, which messes up the ordering of requests.
-const QueueChannelBufferSize = 200
-
 type QueueItem struct {
 	Req *http.Request
 	Res *http.ResponseWriter
@@ -41,19 +34,29 @@ type RequestQueue struct {
 	queues map[uint64]*QueueChannel
 	processor func(item *QueueItem) *http.Response
 	globalBucket leakybucket.Bucket
+	// bufferSize Defines the size of the request channel buffer for each bucket
+	// Realistically, this should be as high as possible to prevent blocking sends
+	// While blocking sends aren't a problem in itself, they are unordered, meaning
+	// in a high load situation, if this number is too low, it would cause requests to
+	// fight to send, which messes up the ordering of requests. This variable can be tweaked
+	// using ENV vars, lower will improve memory usage, higher will provide higher ordering guarantees
+	// Defaults to 50
+	bufferSize int64
 }
 
-func NewRequestQueue(processor func(item *QueueItem) *http.Response, globalLimit uint) *RequestQueue {
+func NewRequestQueue(processor func(item *QueueItem) *http.Response, globalLimit uint, bufferSize int64) *RequestQueue {
 	memStorage := memory.New()
 	globalBucket, err := memStorage.Create("global", globalLimit, 1 * time.Second)
 	if err != nil {
 		panic(err)
 	}
+
 	ret := &RequestQueue{
 		queues:            make(map[uint64]*QueueChannel),
 		processor:         processor,
 		globalBucket:      globalBucket,
 		globalLockedUntil: new(int64),
+		bufferSize: 	   bufferSize,
 	}
 	go ret.tickSweep()
 	return ret
@@ -111,7 +114,7 @@ func (q *RequestQueue) getQueueChannel(path string) *QueueChannel {
 		// While we didn't hold the exclusive lock
 		ch, ok = q.queues[pathHash]
 		if !ok {
-			ch = &QueueChannel{ make(chan *QueueItem, QueueChannelBufferSize), &t }
+			ch = &QueueChannel{ make(chan *QueueItem, q.bufferSize), &t }
 			q.queues[pathHash] = ch
 			// It's important that we only have 1 goroutine per channel
 			go q.subscribe(ch, path, pathHash)

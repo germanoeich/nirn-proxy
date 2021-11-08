@@ -87,6 +87,12 @@ func doDiscordReq(path string, method string, body io.ReadCloser, header http.He
 		status := discordResp.Status
 		method := discordResp.Request.Method
 		elapsed := time.Since(startTime).Seconds()
+
+		if discordResp.StatusCode == 429 {
+			if discordResp.Header.Get("x-ratelimit-scope") == "shared" {
+				status = "429 Shared"
+			}
+		}
 		RequestSummary.With(map[string]string{"route": route, "status": status, "method": method, "clientId": clientId}).Observe(elapsed)
 	}
 	return discordResp, err
