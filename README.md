@@ -22,9 +22,13 @@ Configuration options are
 | LOG_LEVEL   | panic, fatal, error, warn, info, debug, trace | info |
 | PORT        | number | 8080    |
 | METRICS_PORT| number | 9000    |
-| ENABLE_METRICS| boolean| true   |
+| ENABLE_METRICS| boolean| true  |
 | ENABLE_PPROF| boolean| false   |
-| BUFFER_SIZE [(?)](https://github.com/germanoeich/nirn-proxy/blob/main/lib/queue.go#L37-L43) | number | 50      |
+| BUFFER_SIZE | number | 50      |
+| OUTBOUND_IP | string | ""      |
+| BIND_IP     | string | 0.0.0.0 |
+
+Information on each config var can be found [here](https://github.com/germanoeich/nirn-proxy/blob/main/CONFIG.md)
 
 .env files are loaded if present
 
@@ -34,7 +38,7 @@ The proxy listens on all routes and relays them to Discord, while keeping track 
 
 When using the proxy, it is safe to remove the ratelimiting logic from clients and fire requests instantly, however, the proxy does not handle retries. If for some reason (i.e shared ratelimits, internal discord ratelimits, etc) the proxy encounters a 429, it will return that to the client. It is safe to immediately retry requests that return 429 or even setup retry logic elsewhere (like in a load balancer or service mesh).
 
-The proxy also guards against known scenarios that might cause a cloudflare ban, like too webhook 404s or too many 401s.
+The proxy also guards against known scenarios that might cause a cloudflare ban, like too many webhook 404s or too many 401s.
 
 ### Limitations
 

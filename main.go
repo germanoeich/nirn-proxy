@@ -70,6 +70,11 @@ func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) 
 }
 
 func main()  {
+	outboundIp := os.Getenv("OUTBOUND_IP")
+	if outboundIp != "" {
+		lib.ConfigureDiscordHTTPClient(outboundIp)
+	}
+
 	logLevel := os.Getenv("LOG_LEVEL")
 	if logLevel == "" {
 		logLevel = "info"
@@ -85,11 +90,16 @@ func main()  {
 		port = "8080"
 	}
 
+	bindIp := os.Getenv("BIND_IP")
+	if bindIp == "" {
+		bindIp = "0.0.0.0"
+	}
+
 	logger.SetLevel(lvl)
-	logger.Info("Starting proxy on :" + port)
+	logger.Info("Starting proxy on " + bindIp + ":" + port)
 	lib.SetLogger(logger)
 	s := &http.Server{
-		Addr:           ":" + port,
+		Addr:           bindIp + ":" + port,
 		Handler:        &GenericHandler{},
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   1 * time.Hour,
@@ -105,7 +115,7 @@ func main()  {
 		if port == "" {
 			port = "9000"
 		}
-		go lib.StartMetrics(port)
+		go lib.StartMetrics(bindIp + ":" + port)
 	}
 
 	bufferEnv := os.Getenv("BUFFER_SIZE")

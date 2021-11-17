@@ -20,11 +20,11 @@ var (
 	}, []string{"method", "status", "route", "clientId"})
 )
 
-func StartMetrics(port string) {
+func StartMetrics(addr string) {
 	prometheus.MustRegister(RequestSummary)
 	http.Handle("/metrics", promhttp.Handler())
-	logger.Info("Starting metrics server on :" + port)
-	err := http.ListenAndServe(":" + port, nil)
+	logger.Info("Starting metrics server on " + addr)
+	err := http.ListenAndServe(addr, nil)
 	if err != nil {
 		logger.Error(err)
 		return

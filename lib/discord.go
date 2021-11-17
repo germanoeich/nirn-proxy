@@ -1,12 +1,14 @@
 package lib
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
 	"math"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -16,6 +18,26 @@ var client = &http.Client{}
 
 type BotGatewayResponse struct {
 	SessionStartLimit map[string]int `json:"session_start_limit"`
+}
+
+func ConfigureDiscordHTTPClient(ip string) {
+	addr, err := net.ResolveTCPAddr("tcp", ip + ":0")
+
+	if err != nil {
+		panic(err)
+	}
+
+	dialer := &net.Dialer{LocalAddr: addr}
+
+	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := dialer.Dial(network, addr)
+		return conn, err
+	}
+
+	transport := &http.Transport{DialContext: dialContext}
+	client = &http.Client{
+		Transport: transport,
+	}
 }
 
 func GetBotGlobalLimit(token string) (uint, error) {

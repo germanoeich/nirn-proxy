@@ -29,6 +29,8 @@ func TestPaths(t *testing.T) {
 		{"/api/v9/invalid/203039963636301824/route/203039963636301824", "GET", "/invalid/203039963636301824/route/!"},
 		//Special case for /guilds/:id/channels
 		{"/api/v9/guilds/203039963636301824/channels", "GET", "/guilds/!/channels"},
+		// Wierd routes
+		{"/api/v9/guilds/templates/203039963636301824", "GET", "/guilds/templates/!"},
 	}
 	for _, tt := range tests {
 		testname := fmt.Sprintf("%s-%s", tt.method, tt.path)

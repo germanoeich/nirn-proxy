@@ -89,11 +89,10 @@ func GetOptimisticBucketPath(url string, method string) string {
 		bucket += MajorInvites + "/!"
 		currMajor = MajorInvites
 	case MajorGuilds:
-		/* TODO: Figure out why this makes the bot unresponsive
+		// guilds/:guildId/channels share the same bucket for all guilds
 		if numParts == 3 && parts[2] == "channels" {
-			return "/guilds/!/channels"
+			return "/" + MajorGuilds + "/!/channels"
 		}
-		*/
 		fallthrough
 	case MajorWebhooks:
 		fallthrough

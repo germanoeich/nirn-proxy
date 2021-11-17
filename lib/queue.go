@@ -35,12 +35,6 @@ type RequestQueue struct {
 	processor func(item *QueueItem) *http.Response
 	globalBucket leakybucket.Bucket
 	// bufferSize Defines the size of the request channel buffer for each bucket
-	// Realistically, this should be as high as possible to prevent blocking sends
-	// While blocking sends aren't a problem in itself, they are unordered, meaning
-	// in a high load situation, if this number is too low, it would cause requests to
-	// fight to send, which messes up the ordering of requests. This variable can be tweaked
-	// using ENV vars, lower will improve memory usage, higher will provide higher ordering guarantees
-	// Defaults to 50
 	bufferSize int64
 }
 
