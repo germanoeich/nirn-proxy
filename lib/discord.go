@@ -14,13 +14,20 @@ import (
 	"time"
 )
 
-var client = &http.Client{}
+var client *http.Client = &http.Client{
+	Timeout: 60 * time.Second,
+}
+
+var contextTimeout time.Duration
 
 type BotGatewayResponse struct {
 	SessionStartLimit map[string]int `json:"session_start_limit"`
 }
 
-func ConfigureDiscordHTTPClient(ip string) {
+func createTransport(ip string) http.RoundTripper {
+	if ip == "" {
+		return http.DefaultTransport
+	}
 	addr, err := net.ResolveTCPAddr("tcp", ip + ":0")
 
 	if err != nil {
@@ -34,10 +41,17 @@ func ConfigureDiscordHTTPClient(ip string) {
 		return conn, err
 	}
 
-	transport := &http.Transport{DialContext: dialContext}
+	transport := http.Transport{DialContext: dialContext}
+	return &transport
+}
+
+func ConfigureDiscordHTTPClient(ip string, timeout time.Duration) {
+	transport := createTransport(ip)
 	client = &http.Client{
 		Transport: transport,
 	}
+
+	contextTimeout = timeout
 }
 
 func GetBotGlobalLimit(token string) (uint, error) {
@@ -45,7 +59,7 @@ func GetBotGlobalLimit(token string) (uint, error) {
 		return math.MaxUint32, nil
 	}
 
-	bot, err := doDiscordReq("/api/v9/gateway/bot", "GET", nil, map[string][]string{ "Authorization": {token} }, "")
+	bot, err := doDiscordReq(context.Background(),"/api/v9/gateway/bot", "GET", nil, map[string][]string{ "Authorization": {token} }, "")
 
 	if err != nil {
 		return 0, err
@@ -93,8 +107,8 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
-func doDiscordReq(path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
-	discordReq, err := http.NewRequest(method, "https://discord.com" + path + "?" + query, body)
+func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
+	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com" + path + "?" + query, body)
 	discordReq.Header = header
 	if err != nil {
 		return nil, err
@@ -104,6 +118,7 @@ func doDiscordReq(path string, method string, body io.ReadCloser, header http.He
 	clientId := GetBotId(token)
 	startTime := time.Now()
 	discordResp, err := client.Do(discordReq)
+
 	if err == nil {
 		route := GetMetricsPath(path)
 		status := discordResp.Status
@@ -120,17 +135,21 @@ func doDiscordReq(path string, method string, body io.ReadCloser, header http.He
 	return discordResp, err
 }
 
-func ProcessRequest(item *QueueItem) *http.Response {
+func ProcessRequest(item *QueueItem) (*http.Response, error) {
 	req := item.Req
 	res := *item.Res
 
-	discordResp, err := doDiscordReq(req.URL.Path, req.Method, req.Body, req.Header.Clone(), req.URL.RawQuery)
+	ctx, _ := context.WithTimeout(context.Background(), contextTimeout)
+	discordResp, err := doDiscordReq(ctx, req.URL.Path, req.Method, req.Body, req.Header.Clone(), req.URL.RawQuery)
 
 	if err != nil {
-		logger.Error(err)
-		res.WriteHeader(500)
+		if ctx.Err() == context.DeadlineExceeded {
+			res.WriteHeader(408)
+		} else {
+			res.WriteHeader(500)
+		}
 		_, _ = res.Write([]byte(err.Error()))
-		return nil
+		return nil, err
 	}
 
 	logger.WithFields(logrus.Fields{
@@ -143,10 +162,9 @@ func ProcessRequest(item *QueueItem) *http.Response {
 
 	body, err := ioutil.ReadAll(discordResp.Body)
 	if err != nil {
-		logger.Error(err)
 		res.WriteHeader(500)
 		_, _ = res.Write([]byte(err.Error()))
-		return nil
+		return nil, err
 	}
 
 	copyHeader(res.Header(), discordResp.Header)
@@ -154,9 +172,8 @@ func ProcessRequest(item *QueueItem) *http.Response {
 
 	_, err = res.Write(body)
 	if err != nil {
-		logger.Error(err)
-		return nil
+		return nil, err
 	}
 
-	return discordResp
+	return discordResp, nil
 }

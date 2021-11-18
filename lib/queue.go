@@ -32,13 +32,13 @@ type RequestQueue struct {
 	sweepTicker       *time.Ticker
 	// bucket path hash as key
 	queues map[uint64]*QueueChannel
-	processor func(item *QueueItem) *http.Response
+	processor func(item *QueueItem) (*http.Response, error)
 	globalBucket leakybucket.Bucket
 	// bufferSize Defines the size of the request channel buffer for each bucket
 	bufferSize int64
 }
 
-func NewRequestQueue(processor func(item *QueueItem) *http.Response, globalLimit uint, bufferSize int64) *RequestQueue {
+func NewRequestQueue(processor func(item *QueueItem) (*http.Response, error), globalLimit uint, bufferSize int64) *RequestQueue {
 	memStorage := memory.New()
 	globalBucket, err := memStorage.Create("global", globalLimit, 1 * time.Second)
 	if err != nil {
@@ -224,9 +224,9 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			continue
 		}
 
-		resp := q.processor(item)
-		if resp == nil {
-			item.errChan <- errors.New("invalid HTTP response from process()")
+		resp, err := q.processor(item)
+		if err != nil {
+			item.errChan <- err
 			continue
 		}
 		_, remaining, resetAfter, isGlobal, err := parseHeaders(&resp.Header)

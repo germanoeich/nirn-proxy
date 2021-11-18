@@ -71,9 +71,17 @@ func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) 
 
 func main()  {
 	outboundIp := os.Getenv("OUTBOUND_IP")
-	if outboundIp != "" {
-		lib.ConfigureDiscordHTTPClient(outboundIp)
+	timeoutEnv := os.Getenv("REQUEST_TIMEOUT")
+	var timeout int64 = 5000
+	if timeoutEnv != "" {
+		timeoutParsed, err := strconv.ParseInt(timeoutEnv, 10, 64)
+		if err != nil {
+			panic("Failed to parse REQUEST_TIMEOUT")
+		}
+		timeout = timeoutParsed
 	}
+
+	lib.ConfigureDiscordHTTPClient(outboundIp, time.Duration(timeout) * time.Millisecond)
 
 	logLevel := os.Getenv("LOG_LEVEL")
 	if logLevel == "" {

@@ -27,3 +27,6 @@ Example: `"120.121.122.123"`
 The IP to bind the HTTP server on (both for requests and metrics). 127.0.0.1 will only allow requests coming from the loopback interface. Useful for preventing the proxy from being accessed from outside of LAN, for example.
 
 Example: `"10.0.0.42"` - Would only listen on LAN
+
+##### REQUEST_TIMEOUT
+Defines the amount of time the proxy will wait for a response from discord. Does not include time waiting for ratelimits to clear.
