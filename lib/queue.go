@@ -82,6 +82,11 @@ func (q *RequestQueue) tickSweep() {
 
 func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) (string, *http.Response, error) {
 	path := GetOptimisticBucketPath(req.URL.Path, req.Method)
+	logger.WithFields(logrus.Fields{
+		"bucket": path,
+		"path": req.URL.Path,
+		"method": req.Method,
+	}).Trace("Inbound request")
 	q.RLock()
 	ch := q.getQueueChannel(path)
 
@@ -167,10 +172,14 @@ func parseHeaders(headers *http.Header) (int64, int64, time.Duration, bool, erro
 	return limitParsed, remainingParsed, reset, isGlobal, nil
 }
 
-func (q *RequestQueue) takeGlobal() {
+func (q *RequestQueue) takeGlobal(path string) {
 takeGlobal:
 	waitTime := atomic.LoadInt64(q.globalLockedUntil)
 	if waitTime > 0 {
+		logger.WithFields(logrus.Fields{
+			"bucket": path,
+			"waitTime": waitTime,
+		}).Trace("Waiting for existing global to clear")
 		time.Sleep(time.Until(time.Unix(0, waitTime)))
 		sw := atomic.CompareAndSwapInt64(q.globalLockedUntil, waitTime, 0)
 		if sw {
@@ -180,6 +189,10 @@ takeGlobal:
 	_, err := q.globalBucket.Add(1)
 	if err != nil {
 		reset := q.globalBucket.Reset()
+		logger.WithFields(logrus.Fields{
+			"bucket": path,
+			"waitTime": time.Until(reset),
+		}).Trace("Failed to grab global token, sleeping for a bit")
 		time.Sleep(time.Until(reset))
 		goto takeGlobal
 	}
@@ -216,7 +229,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 	// Fail fast path for webhook 404s
 	var ret404 = false
 	for item := range ch.ch {
-		q.takeGlobal()
+		q.takeGlobal(path)
 
 		if ret404 {
 			return404webhook(item)
