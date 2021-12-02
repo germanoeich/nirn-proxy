@@ -229,19 +229,20 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 	// Fail fast path for webhook 404s
 	var ret404 = false
 	for item := range ch.ch {
-		q.takeGlobal(path)
-
 		if ret404 {
 			return404webhook(item)
 			item.doneChan <- nil
 			continue
 		}
 
+		q.takeGlobal(path)
+
 		resp, err := q.processor(item)
 		if err != nil {
 			item.errChan <- err
 			continue
 		}
+
 		_, remaining, resetAfter, isGlobal, err := parseHeaders(&resp.Header)
 
 		if isGlobal {
