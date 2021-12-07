@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/germanoeich/nirn-proxy/lib"
 	_ "github.com/joho/godotenv/autoload"
+	"github.com/panjf2000/ants/v2"
 	"github.com/sirupsen/logrus"
 	"net/http"
 	"os"
@@ -14,11 +15,12 @@ import (
 
 var logger = logrus.New()
 // token : queue map
-var queues = make(map[string]*lib.RequestQueue)
+var queues = make(map[string]lib.RequestQueue)
 // Store invalid tokens to prevent a storm when a token gets reset
 var invalidTokens = make(map[string]bool)
 var queueMu = sync.Mutex{}
 var bufferSize int64 = 50
+
 
 type GenericHandler struct{}
 func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
@@ -70,6 +72,7 @@ func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) 
 }
 
 func main()  {
+	defer ants.Release()
 	outboundIp := os.Getenv("OUTBOUND_IP")
 	timeoutEnv := os.Getenv("REQUEST_TIMEOUT")
 	var timeout int64 = 5000

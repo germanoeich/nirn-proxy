@@ -53,7 +53,15 @@ Bearer tokens should work, however this was not at all tested and is not the mai
 
 ### Why?
 
-As projects grow, it's desirable to break them into multiple pieces, each responsible for its own domain. Discord provides gateway sharding on their end but REST can get tricky once you start moving logic out of the shards themselves and lose the guild affinity that shards inherently have, thus a centralized place for handling ratelimits is a must to prevent cloudflare bans and prevent avoidable 429s. At the time this project was created, there was no alternative that fully satisfied our requirements like multi-bot support. We are also early adopters of Discord features, so we need a proxy that supports new routes without us having to manually update it. Thus, this project was born.
+As projects grow, it's desirable to break them into multiple pieces, each responsible
+for its own domain. Discord provides gateway sharding on their end but REST handling 
+can become challenging once you start moving logic out of the shards 
+and lose the guild affinity that shards inherently have, which makes a centralized place for handling
+ratelimits desirable in order to prevent cloudflare bans and avoidable 429s. At the
+time this project was created, there was no alternative that fully satisfied our
+requirements like multi-bot support. We are also early adopters of Discord features,
+so we need a proxy that supports new routes without us having to manually update it.
+Thus, this project was born.
 
 ### Resource usage
 

@@ -40,10 +40,10 @@ func BenchmarkRegex(b *testing.B) {
 
 // ====================================================
 
-
+// BenchmarkOptimistic-8   	 2407912	       424.5 ns/op	     192 B/op	       5 allocs/op
 func BenchmarkOptimistic(b *testing.B) {
-	b.ReportAllocs()
 	url := `guilds/121124124124124124/pins/121124124124124124`
+	b.ReportAllocs()
 	for n := 0; n < b.N; n++ {
 		lib.GetOptimisticBucketPath(url, "GET")
 	}

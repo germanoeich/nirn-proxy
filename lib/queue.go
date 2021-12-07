@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/Clever/leakybucket"
 	"github.com/Clever/leakybucket/memory"
+	"github.com/panjf2000/ants/v2"
 	"github.com/sirupsen/logrus"
 	"net/http"
 	"strconv"
@@ -29,28 +30,31 @@ type RequestQueue struct {
 	sync.RWMutex
 	channelMu         sync.Mutex
 	globalLockedUntil *int64
-	sweepTicker       *time.Ticker
 	// bucket path hash as key
 	queues map[uint64]*QueueChannel
 	processor func(item *QueueItem) (*http.Response, error)
 	globalBucket leakybucket.Bucket
 	// bufferSize Defines the size of the request channel buffer for each bucket
 	bufferSize int64
+	workerPool *ants.Pool
 }
 
-func NewRequestQueue(processor func(item *QueueItem) (*http.Response, error), globalLimit uint, bufferSize int64) *RequestQueue {
+func NewRequestQueue(processor func(item *QueueItem) (*http.Response, error), globalLimit uint, bufferSize int64) RequestQueue {
+	// This is absurdly large, we don't want to limit goroutine count but rather be able to reuse goroutines
+	poll, err := ants.NewPool(int(globalLimit * 1000), ants.WithPreAlloc(false))
 	memStorage := memory.New()
 	globalBucket, err := memStorage.Create("global", globalLimit, 1 * time.Second)
 	if err != nil {
 		panic(err)
 	}
 
-	ret := &RequestQueue{
+	ret := RequestQueue{
 		queues:            make(map[uint64]*QueueChannel),
 		processor:         processor,
 		globalBucket:      globalBucket,
 		globalLockedUntil: new(int64),
 		bufferSize: 	   bufferSize,
+		workerPool: 	   poll,
 	}
 	go ret.tickSweep()
 	return ret
@@ -73,9 +77,9 @@ func (q *RequestQueue) sweep() {
 }
 
 func (q *RequestQueue) tickSweep() {
-	q.sweepTicker = time.NewTicker(5 * time.Minute)
+	t := time.NewTicker(5 * time.Minute)
 
-	for range q.sweepTicker.C {
+	for range t.C {
 		q.sweep()
 	}
 }
@@ -88,7 +92,11 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) (strin
 		"method": req.Method,
 	}).Trace("Inbound request")
 	q.RLock()
-	ch := q.getQueueChannel(path)
+	ch, err := q.getQueueChannel(path)
+
+	if err != nil {
+		return path, nil, errors.New("failed to get/create queue channel")
+	}
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
@@ -102,26 +110,33 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) (strin
 	}
 }
 
-func (q *RequestQueue) getQueueChannel(path string) *QueueChannel {
+func (q *RequestQueue) getQueueChannel(path string) (*QueueChannel, error) {
 	pathHash := HashCRC64(path)
 	q.channelMu.Lock()
 	defer q.channelMu.Unlock()
 	t := time.Now()
 	ch, ok := q.queues[pathHash]
 	if !ok {
-		// Check again to see if the queue channel wasn't created
-		// While we didn't hold the exclusive lock
-		ch, ok = q.queues[pathHash]
-		if !ok {
-			ch = &QueueChannel{ make(chan *QueueItem, q.bufferSize), &t }
-			q.queues[pathHash] = ch
-			// It's important that we only have 1 goroutine per channel
-			go q.subscribe(ch, path, pathHash)
+		ch = &QueueChannel{ make(chan *QueueItem, q.bufferSize), &t }
+		q.queues[pathHash] = ch
+
+		err := q.workerPool.Submit(func() {
+			q.subscribe(ch, path, pathHash)
+		})
+
+		if err != nil {
+			logger.WithFields(logrus.Fields{
+				"poolSize": q.workerPool.Cap(),
+				"poolLeft": q.workerPool.Free(),
+				"poolClosed": q.workerPool.IsClosed(),
+				"route": path,
+			}).Error(err)
+			return nil, err
 		}
 	} else {
 		ch.lastUsed = &t
 	}
-	return ch
+	return ch, nil
 }
 
 func parseHeaders(headers *http.Header) (int64, int64, time.Duration, bool, error) {
