@@ -1,12 +1,10 @@
 package lib
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"github.com/sirupsen/logrus"
-	"io"
-	"io/ioutil"
+	"github.com/valyala/fasthttp"
 	"math"
 	"net"
 	"net/http"
@@ -14,9 +12,8 @@ import (
 	"time"
 )
 
-var client *http.Client = &http.Client{
-	Timeout: 60 * time.Second,
-}
+var defaultTimeouts = 60 * time.Second
+var client *fasthttp.Client
 
 var contextTimeout time.Duration
 
@@ -24,31 +21,23 @@ type BotGatewayResponse struct {
 	SessionStartLimit map[string]int `json:"session_start_limit"`
 }
 
-func createTransport(ip string) http.RoundTripper {
-	if ip == "" {
-		return http.DefaultTransport
+func ConfigureDiscordHTTPClient(ip string, timeout time.Duration) {
+	addr, err := net.ResolveTCPAddr("tcp", ip)
+	dialer := fasthttp.TCPDialer{
+		LocalAddr: addr,
 	}
-	addr, err := net.ResolveTCPAddr("tcp", ip + ":0")
 
 	if err != nil {
 		panic(err)
 	}
 
-	dialer := &net.Dialer{LocalAddr: addr}
-
-	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		conn, err := dialer.Dial(network, addr)
-		return conn, err
-	}
-
-	transport := http.Transport{DialContext: dialContext}
-	return &transport
-}
-
-func ConfigureDiscordHTTPClient(ip string, timeout time.Duration) {
-	transport := createTransport(ip)
-	client = &http.Client{
-		Transport: transport,
+	client = &fasthttp.Client{
+		NoDefaultUserAgentHeader:      true,
+		Dial:                          dialer.Dial,
+		MaxIdleConnDuration:           defaultTimeouts,
+		MaxConnDuration:               defaultTimeouts,
+		DisableHeaderNamesNormalizing: true,
+		DisablePathNormalizing:        true,
 	}
 
 	contextTimeout = timeout
@@ -59,22 +48,30 @@ func GetBotGlobalLimit(token string) (uint, error) {
 		return math.MaxUint32, nil
 	}
 
-	bot, err := doDiscordReq(context.Background(),"/api/v9/gateway/bot", "GET", nil, map[string][]string{ "Authorization": {token} }, "")
+	headers := fasthttp.RequestHeader{}
+	headers.Set("Authorization", token)
+	headers.SetMethod("GET")
+	bot, err := doDiscordReq(
+		[]byte("/api/v9/gateway/bot"),
+		nil,
+		headers,
+		[]byte(""),
+	)
 
 	if err != nil {
 		return 0, err
 	}
 
 	switch {
-	case bot.StatusCode == 401:
+	case bot.StatusCode() == 401:
 		return 0, errors.New("invalid token - nirn-proxy")
-	case bot.StatusCode == 429:
+	case bot.StatusCode() == 429:
 		return 0, errors.New("429 on gateway/bot")
-	case bot.StatusCode == 500:
+	case bot.StatusCode() == 500:
 		return 0, errors.New("500 on gateway/bot")
 	}
 
-	body, _ := ioutil.ReadAll(bot.Body)
+	body := bot.Body()
 
 	var s BotGatewayResponse
 
@@ -95,85 +92,69 @@ func GetBotGlobalLimit(token string) (uint, error) {
 	}
 }
 
-func copyHeader(dst, src http.Header) {
-	dst["Date"] = nil
-	dst["Content-Type"] = nil
-	for k, vv := range src {
-		for _, v := range vv {
-			if k != "Content-Length" {
-				dst[strings.ToLower(k)] = []string{v}
-			}
-		}
-	}
-}
+func doDiscordReq(path []byte, body []byte, header fasthttp.RequestHeader, query []byte) (*fasthttp.Response, error) {
+	uri := strings.Builder{}
+	uri.WriteString("https://discord.com")
+	uri.Write(path)
+	uri.WriteByte('?')
+	uri.Write(query)
 
-func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
-	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com" + path + "?" + query, body)
-	discordReq.Header = header
-	if err != nil {
-		return nil, err
-	}
+	discordReq := fasthttp.AcquireRequest()
+	discordResp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(discordReq)
 
-	token := discordReq.Header.Get("Authorization")
+	header.CopyTo(&discordReq.Header)
+	discordReq.SetRequestURI(uri.String())
+	discordReq.SetBodyRaw(body)
+
+	token := discordReq.Header.Peek("Authorization")
 	clientId := GetBotId(token)
 	startTime := time.Now()
-	discordResp, err := client.Do(discordReq)
+	err := client.DoTimeout(discordReq, discordResp, contextTimeout)
 
 	if err == nil {
-		route := GetMetricsPath(path)
-		status := discordResp.Status
-		method := discordResp.Request.Method
+		route := GetMetricsPath(B2S(path))
+		status := discordResp.StatusCode()
+		method := discordReq.Header.Method()
 		elapsed := time.Since(startTime).Seconds()
-
-		if discordResp.StatusCode == 429 {
-			if discordResp.Header.Get("x-ratelimit-scope") == "shared" {
-				status = "429 Shared"
+		promStatus := http.StatusText(status)
+		if status == 429 {
+			if B2S(discordResp.Header.Peek("x-ratelimit-scope")) == "shared" {
+				promStatus = "429 Shared"
 			}
 		}
-		RequestSummary.With(map[string]string{"route": route, "status": status, "method": method, "clientId": clientId}).Observe(elapsed)
+		RequestSummary.With(map[string]string{"route": route, "status": promStatus, "method": B2S(method), "clientId": clientId}).Observe(elapsed)
 	}
+
 	return discordResp, err
 }
 
-func ProcessRequest(item *QueueItem) (*http.Response, error) {
-	req := item.Req
-	res := *item.Res
-
-	ctx, _ := context.WithTimeout(context.Background(), contextTimeout)
-	discordResp, err := doDiscordReq(ctx, req.URL.Path, req.Method, req.Body, req.Header.Clone(), req.URL.RawQuery)
+func ProcessRequest(item *QueueItem) (*fasthttp.Response, error) {
+	discordResp, err := doDiscordReq(item.Ctx.Path(), item.Ctx.PostBody(), item.Ctx.Request.Header, item.Ctx.QueryArgs().QueryString())
 
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			res.WriteHeader(408)
+		if err == fasthttp.ErrTimeout {
+			item.Ctx.SetStatusCode(408)
 		} else {
-			res.WriteHeader(500)
+			item.Ctx.SetStatusCode(500)
 		}
-		_, _ = res.Write([]byte(err.Error()))
-		return nil, err
+		item.Ctx.SetBody(S2B(err.Error()))
+		return discordResp, err
 	}
 
 	logger.WithFields(logrus.Fields{
-		"method": req.Method,
-		"path": req.URL.String(),
-		"status": discordResp.Status,
-		// TODO: Remove this when 429s are not a problem anymore
-		"discordBucket": discordResp.Header.Get("x-ratelimit-bucket"),
+		"method": B2S(item.Ctx.Method()),
+		"path": B2S(item.Ctx.Path()),
+		"status": discordResp.StatusCode(),
+		"discordBucket": B2S(discordResp.Header.Peek("x-ratelimit-bucket")),
 	}).Debug("Discord request")
 
-	body, err := ioutil.ReadAll(discordResp.Body)
-	if err != nil {
-		res.WriteHeader(500)
-		_, _ = res.Write([]byte(err.Error()))
-		return nil, err
-	}
+	body := discordResp.Body()
 
-	copyHeader(res.Header(), discordResp.Header)
-	res.WriteHeader(discordResp.StatusCode)
+	discordResp.Header.CopyTo(&item.Ctx.Response.Header)
+	item.Ctx.SetStatusCode(discordResp.StatusCode())
 
-	_, err = res.Write(body)
-	if err != nil {
-		return nil, err
-	}
+	item.Ctx.SetBody(body)
 
 	return discordResp, nil
 }

@@ -1,12 +1,13 @@
 package lib
 
 import (
+	"bytes"
 	"errors"
 	"github.com/Clever/leakybucket"
 	"github.com/Clever/leakybucket/memory"
 	"github.com/panjf2000/ants/v2"
 	"github.com/sirupsen/logrus"
-	"net/http"
+	"github.com/valyala/fasthttp"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,9 +16,8 @@ import (
 )
 
 type QueueItem struct {
-	Req *http.Request
-	Res *http.ResponseWriter
-	doneChan chan *http.Response
+	Ctx      *fasthttp.RequestCtx
+	doneChan chan bool
 	errChan chan error
 }
 
@@ -32,14 +32,14 @@ type RequestQueue struct {
 	globalLockedUntil *int64
 	// bucket path hash as key
 	queues map[uint64]*QueueChannel
-	processor func(item *QueueItem) (*http.Response, error)
+	processor func(item *QueueItem) (*fasthttp.Response, error)
 	globalBucket leakybucket.Bucket
 	// bufferSize Defines the size of the request channel buffer for each bucket
 	bufferSize int64
 	workerPool *ants.Pool
 }
 
-func NewRequestQueue(processor func(item *QueueItem) (*http.Response, error), globalLimit uint, bufferSize int64) RequestQueue {
+func NewRequestQueue(processor func(item *QueueItem) (*fasthttp.Response, error), globalLimit uint, bufferSize int64) RequestQueue {
 	// This is absurdly large, we don't want to limit goroutine count but rather be able to reuse goroutines
 	poll, err := ants.NewPool(int(globalLimit * 1000), ants.WithPreAlloc(false))
 	memStorage := memory.New()
@@ -84,29 +84,31 @@ func (q *RequestQueue) tickSweep() {
 	}
 }
 
-func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) (string, *http.Response, error) {
-	path := GetOptimisticBucketPath(req.URL.Path, req.Method)
+func (q *RequestQueue) Queue(ctx *fasthttp.RequestCtx) (error) {
+	reqPath := B2S(ctx.Path())
+	reqMethod := B2S(ctx.Method())
+	path := GetOptimisticBucketPath(reqPath, reqMethod)
 	logger.WithFields(logrus.Fields{
 		"bucket": path,
-		"path": req.URL.Path,
-		"method": req.Method,
+		"path": reqPath,
+		"method": reqMethod,
 	}).Trace("Inbound request")
 	q.RLock()
 	ch, err := q.getQueueChannel(path)
 
 	if err != nil {
-		return path, nil, errors.New("failed to get/create queue channel")
+		return errors.New("failed to get/create queue channel")
 	}
 
-	doneChan := make(chan *http.Response)
+	doneChan := make(chan bool)
 	errChan := make(chan error)
-	ch.ch <- &QueueItem{req, res, doneChan, errChan }
+	ch.ch <- &QueueItem{ctx, doneChan,errChan }
 	q.RUnlock()
 	select {
-	case resp := <-doneChan:
-		return path, resp, nil
+	case <-doneChan:
+		return nil
 	case err := <-errChan:
-		return path, nil, err
+		return err
 	}
 }
 
@@ -139,25 +141,25 @@ func (q *RequestQueue) getQueueChannel(path string) (*QueueChannel, error) {
 	return ch, nil
 }
 
-func parseHeaders(headers *http.Header) (int64, int64, time.Duration, bool, error) {
+func parseHeaders(headers *fasthttp.ResponseHeader) (int64, int64, time.Duration, bool, error) {
 	if headers == nil {
 		return 0, 0, 0, false, errors.New("null headers")
 	}
 
-	limit := headers.Get("x-ratelimit-limit")
-	remaining := headers.Get("x-ratelimit-remaining")
-	resetAfter := headers.Get("x-ratelimit-reset-after")
-	if resetAfter == "" {
+	limit := headers.Peek("x-ratelimit-limit")
+	remaining := headers.Peek("x-ratelimit-remaining")
+	resetAfter := headers.Peek("x-ratelimit-reset-after")
+	if len(resetAfter) == 0 {
 		// Globals return no x-ratelimit-reset-after headers, this is the best option without parsing the body
-		resetAfter = headers.Get("retry-after")
+		resetAfter = headers.Peek("retry-after")
 	}
-	isGlobal := headers.Get("x-ratelimit-global") == "true"
+	isGlobal := B2S(headers.Peek("x-ratelimit-global")) == "true"
 
 	var resetParsed float64
 	var reset time.Duration
 	var err error
-	if resetAfter != "" {
-		resetParsed, err = strconv.ParseFloat(resetAfter, 64)
+	if len(resetAfter) > 0 {
+		resetParsed, err = strconv.ParseFloat(B2S(resetAfter), 64)
 		if err != nil {
 			return 0, 0, 0, false, err
 		}
@@ -170,16 +172,16 @@ func parseHeaders(headers *http.Header) (int64, int64, time.Duration, bool, erro
 		return 0, 0, reset, isGlobal, nil
 	}
 
-	if limit == "" {
+	if len(limit) == 0 {
 		return 0, 0, 0, false, nil
 	}
 
-	limitParsed, err := strconv.ParseInt(limit, 10, 32)
+	limitParsed, err := strconv.ParseInt(B2S(limit), 10, 32)
 	if err != nil {
 		return 0, 0, 0, false, err
 	}
 
-	remainingParsed, err := strconv.ParseInt(remaining, 10, 32)
+	remainingParsed, err := strconv.ParseInt(B2S(remaining), 10, 32)
 	if err != nil {
 		return 0, 0, 0, false, err
 	}
@@ -214,17 +216,12 @@ takeGlobal:
 }
 
 func return404webhook(item *QueueItem) {
-	res := *item.Res
-	res.WriteHeader(404)
-	body := "{\n  \"message\": \"Unknown Webhook\",\n  \"code\": 10015\n}"
-	_, err := res.Write([]byte(body))
-	if err != nil {
-		return
-	}
+	item.Ctx.SetStatusCode(404)
+	item.Ctx.WriteString("{\n  \"message\": \"Unknown Webhook\",\n  \"code\": 10015\n}")
 }
 
-func isInteraction(url string) bool {
-	parts := strings.Split(strings.SplitN(url, "?", 1)[0], "/")
+func isInteraction(url []byte) bool {
+	parts := bytes.Split(bytes.SplitN(url,[]byte("?"), 1)[0], []byte("/"))
 	for _, p := range parts {
 		if len(p) > 128 {
 			return true
@@ -246,15 +243,17 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 	for item := range ch.ch {
 		if ret404 {
 			return404webhook(item)
-			item.doneChan <- nil
+			item.doneChan <- false
 			continue
 		}
 
 		q.takeGlobal(path)
 
 		resp, err := q.processor(item)
+
 		if err != nil {
 			item.errChan <- err
+			fasthttp.ReleaseResponse(resp)
 			continue
 		}
 
@@ -273,36 +272,38 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 
 		if err != nil {
 			item.errChan <- err
+			fasthttp.ReleaseResponse(resp)
 			continue
 		}
-		item.doneChan <- resp
+		item.doneChan <- true
 
-		if resp.StatusCode == 429 {
+		if resp.StatusCode() == 429 {
 			logger.WithFields(logrus.Fields{
 				"prevRemaining": prevRem,
 				"prevResetAfter": prevReset,
 				"remaining": remaining,
 				"resetAfter": resetAfter,
 				"bucket": path,
-				"route": item.Req.URL.String(),
-				"method": item.Req.Method,
+				"route": B2S(item.Ctx.RequestURI()),
+				"method": B2S(item.Ctx.Method()),
 				"isGlobal": isGlobal,
 				"pathHash": pathHash,
 				// TODO: Remove this when 429s are not a problem anymore
-				"discordBucket": resp.Header.Get("x-ratelimit-bucket"),
-				"ratelimitScope": resp.Header.Get("x-ratelimit-scope"),
+				"discordBucket": B2S(resp.Header.Peek("x-ratelimit-bucket")),
+				"ratelimitScope": B2S(resp.Header.Peek("x-ratelimit-scope")),
 			}).Warn("Unexpected 429")
 		}
 
-		if resp.StatusCode == 404 && strings.HasPrefix(path, "/webhooks/") && !isInteraction(item.Req.URL.String()) {
+		if resp.StatusCode() == 404 && strings.HasPrefix(path, "/webhooks/") && !isInteraction(item.Ctx.RequestURI()) {
 			logger.WithFields(logrus.Fields{
 				"bucket": path,
-				"route": item.Req.URL.String(),
-				"method": item.Req.Method,
+				"route": B2S(item.Ctx.RequestURI()),
+				"method": B2S(item.Ctx.Method()),
 			}).Info("Setting fail fast 404 for webhook")
 			ret404 = true
 		}
-		if remaining == 0 || resp.StatusCode == 429 {
+		fasthttp.ReleaseResponse(resp)
+		if remaining == 0 || resp.StatusCode() == 429 {
 			time.Sleep(time.Until(time.Now().Add(resetAfter)))
 		}
 		prevRem, prevReset = remaining, resetAfter

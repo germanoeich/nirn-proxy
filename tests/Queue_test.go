@@ -1,16 +1,15 @@
 package tests
 
 import (
-	"fmt"
+	"bytes"
 	"github.com/germanoeich/nirn-proxy/lib"
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
+	"github.com/valyala/fasthttp"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -32,44 +31,70 @@ var server_200_noheaders = httptest.NewServer(http.HandlerFunc(func(res http.Res
 
 // global, reset: 500ms
 var server_429_global_500 = httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-	res.Header().Set("x-ratelimit-global", "true")
-	res.Header().Set("x-ratelimit-reset-after", "0.5")
+	res.Header()["x-ratelimit-global"] = []string{"true"}
+	res.Header()["x-ratelimit-reset-after"] = []string{"0.5"}
 	res.WriteHeader(429)
 	res.Write([]byte("body"))
 }))
 
 // remain: 0, limit: 1, reset: 500ms
 var server_429_0_1_500 = httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-	res.Header().Set("x-ratelimit-reset-after", "0.5")
-	res.Header().Set("x-ratelimit-remaining", "0")
-	res.Header().Set("x-ratelimit-limit", "1")
+	res.Header()["x-ratelimit-reset-after"] = []string{"0.5"}
+	res.Header()["x-ratelimit-remaining"] = []string{"0"}
+	res.Header()["x-ratelimit-limit"] = []string{"1"}
 	res.WriteHeader(429)
 	res.Write([]byte("body"))
 }))
 
 // remain: 0, limit: 1, reset: 1ms
 var server_429_0_1_1 = httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-	res.Header().Set("x-ratelimit-reset-after", "0.001")
-	res.Header().Set("x-ratelimit-remaining", "0")
-	res.Header().Set("x-ratelimit-limit", "1")
+	res.Header()["x-ratelimit-reset-after"] = []string{"0.001"}
+	res.Header()["x-ratelimit-remaining"] = []string{"0"}
+	res.Header()["x-ratelimit-limit"] = []string{"1"}
 	res.WriteHeader(429)
 	res.Write([]byte("body"))
 }))
 
+func createRequest(method string, uri string) *fasthttp.Request {
+	req := fasthttp.AcquireRequest()
+	req.SetRequestURI("https://discord.com" + uri)
+	req.Header.SetMethod(method)
+	return req
+}
+
+var fastclient = fasthttp.Client{
+	NoDefaultUserAgentHeader:      true,
+	DisableHeaderNamesNormalizing: true,
+	DisablePathNormalizing:        true,
+}
 
 func TestQueueWorks(t *testing.T) {
 	var count int64 = 0
-	genericProcessor := func(item *lib.QueueItem) (*http.Response, error) {
-		req, _ := http.NewRequest(http.MethodGet, server_200_noheaders.URL, nil)
-		res, _ := http.DefaultClient.Do(req)
+
+	genericProcessor := func(item *lib.QueueItem) (*fasthttp.Response, error) {
+		req := fasthttp.AcquireRequest()
+		defer fasthttp.ReleaseRequest(req)
+		req.SetRequestURI(server_200_noheaders.URL)
+		defer fasthttp.ReleaseRequest(req)
+		res := fasthttp.AcquireResponse()
+		fastclient.Do(req, res)
 		go atomic.AddInt64(&count, 1)
 		return res, nil
 	}
 
 	q := lib.NewRequestQueue(genericProcessor, 50, 50)
 	for i := 0; i < 50; i++ {
-		req := httptest.NewRequest("GET", "/api/v9/guilds/915995872213471273/audit-logs", nil)
-		go q.Queue(req, nil)
+		req := createRequest("GET", "/api/v9/guilds/915995872213471273/audit-logs")
+		res := fasthttp.AcquireResponse()
+		ctx := &fasthttp.RequestCtx{
+			Request:  *req,
+			Response: *res,
+		}
+		go func() {
+			q.Queue(ctx)
+			fasthttp.ReleaseRequest(req)
+			fasthttp.ReleaseResponse(res)
+		}()
 	}
 
 	<- time.After(100 * time.Millisecond)
@@ -80,11 +105,15 @@ func TestQueueFiresSequentially(t *testing.T) {
 	var count int64 = 0
 	mu := sync.RWMutex{}
 	mu.Lock()
-	genericProcessor := func(item *lib.QueueItem) (*http.Response, error) {
+
+	genericProcessor := func(item *lib.QueueItem) (*fasthttp.Response, error) {
 		mu.RLock()
-		req, _ := http.NewRequest(http.MethodGet, server_200_noheaders.URL, nil)
-		res, _ := http.DefaultClient.Do(req)
-		if strings.Contains(item.Req.URL.Path, "2") {
+		req := fasthttp.AcquireRequest()
+		defer fasthttp.ReleaseRequest(req)
+		req.SetRequestURI(server_200_noheaders.URL)
+		res := fasthttp.AcquireResponse()
+		fastclient.Do(req, res)
+		if bytes.Contains(item.Ctx.Path(), []byte("2")) {
 			<- time.After(250 * time.Millisecond)
 		}
 		go atomic.AddInt64(&count, 1)
@@ -94,13 +123,22 @@ func TestQueueFiresSequentially(t *testing.T) {
 	q := lib.NewRequestQueue(genericProcessor, 100, 100)
 	for i := 0; i < 100; i++ {
 		// Force a "sequence" inside the internal channel
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(3 * time.Millisecond)
 		uri := "/api/v9/guilds/111111111111111111/messages/111111111111111111"
 		if i == 30 {
 			uri = "/api/v9/guilds/111111111111111111/messages/111111111111111112"
 		}
-		req, _ := http.NewRequest("GET", uri, nil)
-		go q.Queue(req, nil)
+		req := createRequest("GET", uri)
+		res := fasthttp.AcquireResponse()
+		ctx := &fasthttp.RequestCtx{
+			Request:  *req,
+			Response: *res,
+		}
+		go func() {
+			q.Queue(ctx)
+			fasthttp.ReleaseRequest(req)
+			fasthttp.ReleaseResponse(res)
+		}()
 	}
 
 	mu.Unlock()
@@ -114,10 +152,14 @@ func TestQueueLocksOnDiscordGlobal(t *testing.T) {
 	var count int64 = 0
 	mu := sync.RWMutex{}
 	mu.Lock()
-	genericProcessor := func(item *lib.QueueItem) (*http.Response, error) {
+
+	genericProcessor := func(item *lib.QueueItem) (*fasthttp.Response, error) {
 		mu.RLock()
-		req, _ := http.NewRequest(http.MethodGet, server_429_global_500.URL, nil)
-		res, _ := http.DefaultClient.Do(req)
+		req := fasthttp.AcquireRequest()
+		defer fasthttp.ReleaseRequest(req)
+		req.SetRequestURI(server_429_global_500.URL)
+		res := fasthttp.AcquireResponse()
+		fastclient.Do(req, res)
 		go atomic.AddInt64(&count, 1)
 		return res, nil
 	}
@@ -125,8 +167,17 @@ func TestQueueLocksOnDiscordGlobal(t *testing.T) {
 	q := lib.NewRequestQueue(genericProcessor, 50, 100)
 	for i := 0; i < 2; i++ {
 		uri := "/api/v9/guilds/111111111111111111/messages/111111111111111111"
-		req, _ := http.NewRequest("GET", uri, nil)
-		go q.Queue(req, nil)
+		req := createRequest("GET", uri)
+		res := fasthttp.AcquireResponse()
+		ctx := &fasthttp.RequestCtx{
+			Request:  *req,
+			Response: *res,
+		}
+		go func() {
+			q.Queue(ctx)
+			fasthttp.ReleaseRequest(req)
+			fasthttp.ReleaseResponse(res)
+		}()
 	}
 
 	mu.Unlock()
@@ -140,10 +191,14 @@ func TestQueueGlobalRatelimitWorks(t *testing.T) {
 	var count int64 = 0
 	mu := sync.RWMutex{}
 	mu.Lock()
-	genericProcessor := func(item *lib.QueueItem) (*http.Response, error) {
+
+	genericProcessor := func(item *lib.QueueItem) (*fasthttp.Response, error) {
 		mu.RLock()
-		req, _ := http.NewRequest(http.MethodGet, server_200_noheaders.URL, nil)
-		res, _ := http.DefaultClient.Do(req)
+		req := fasthttp.AcquireRequest()
+		defer fasthttp.ReleaseRequest(req)
+		req.SetRequestURI(server_200_noheaders.URL)
+		res := fasthttp.AcquireResponse()
+		fastclient.Do(req, res)
 		go atomic.AddInt64(&count, 1)
 		return res, nil
 	}
@@ -151,8 +206,17 @@ func TestQueueGlobalRatelimitWorks(t *testing.T) {
 	q := lib.NewRequestQueue(genericProcessor, 50, 100)
 	for i := 0; i < 70; i++ {
 		uri := "/api/v9/guilds/111111111111111111/messages/111111111111111111"
-		req, _ := http.NewRequest("GET", uri, nil)
-		go q.Queue(req, nil)
+		req := createRequest("GET", uri)
+		res := fasthttp.AcquireResponse()
+		ctx := &fasthttp.RequestCtx{
+			Request:  *req,
+			Response: *res,
+		}
+		go func() {
+			q.Queue(ctx)
+			fasthttp.ReleaseRequest(req)
+			fasthttp.ReleaseResponse(res)
+		}()
 	}
 
 	mu.Unlock()
@@ -167,25 +231,38 @@ func TestQueueWorksOnMultipleChannels(t *testing.T) {
 	var count int64 = 0
 	mu := sync.RWMutex{}
 	mu.Lock()
-	genericProcessor := func(item *lib.QueueItem) (*http.Response, error) {
+	genericProcessor := func(item *lib.QueueItem) (*fasthttp.Response, error) {
 		mu.RLock()
-		req, _ := http.NewRequest(http.MethodGet, server_429_0_1_500.URL, nil)
-		res, _ := http.DefaultClient.Do(req)
+		req := fasthttp.AcquireRequest()
+		defer fasthttp.ReleaseRequest(req)
+		req.SetRequestURI(server_429_0_1_500.URL)
+		res := fasthttp.AcquireResponse()
+		fastclient.Do(req, res)
 		go atomic.AddInt64(&count, 1)
 		return res, nil
 	}
 
 	q := lib.NewRequestQueue(genericProcessor, 9999, 100)
+
 	for i := 0; i < 99; i++ {
 		indexstr := strconv.Itoa(i)
 		//Generate a unique bucket per route
 		uri := "/api/v9/guilds/1111111111111111" + indexstr + "/messages/111111111111111111"
-		req, _ := http.NewRequest("GET", uri, nil)
-		go q.Queue(req, nil)
+		req := createRequest("GET", uri)
+		res := fasthttp.AcquireResponse()
+		ctx := &fasthttp.RequestCtx{
+			Request:  *req,
+			Response: *res,
+		}
+		go func() {
+			q.Queue(ctx)
+			fasthttp.ReleaseRequest(req)
+			fasthttp.ReleaseResponse(res)
+		}()
 	}
 
 	mu.Unlock()
-	<- time.After(200 * time.Millisecond)
+	<- time.After(1000 * time.Millisecond)
 	assert.Equal(t, int64(99), count)
 }
 
@@ -193,19 +270,32 @@ func TestQueueBucketLocksUnlocksOn429(t *testing.T) {
 	var count int64 = 0
 	mu := sync.RWMutex{}
 	mu.Lock()
-	genericProcessor := func(item *lib.QueueItem) (*http.Response, error) {
+	genericProcessor := func(item *lib.QueueItem) (*fasthttp.Response, error) {
 		mu.RLock()
-		req, _ := http.NewRequest(http.MethodGet, server_429_0_1_500.URL, nil)
-		res, _ := http.DefaultClient.Do(req)
+		req := fasthttp.AcquireRequest()
+		defer fasthttp.ReleaseRequest(req)
+		req.SetRequestURI(server_429_0_1_500.URL)
+		res := fasthttp.AcquireResponse()
+		fastclient.Do(req, res)
 		go atomic.AddInt64(&count, 1)
 		return res, nil
 	}
 
+
 	q := lib.NewRequestQueue(genericProcessor, 9999, 100)
 	for i := 0; i < 3; i++ {
 		uri := "/api/v9/guilds/111111111111111111/messages/111111111111111111"
-		req, _ := http.NewRequest("GET", uri, nil)
-		go q.Queue(req, nil)
+		req := createRequest("GET", uri)
+		res := fasthttp.AcquireResponse()
+		ctx := &fasthttp.RequestCtx{
+			Request:  *req,
+			Response: *res,
+		}
+		go func() {
+			q.Queue(ctx)
+			fasthttp.ReleaseRequest(req)
+			fasthttp.ReleaseResponse(res)
+		}()
 	}
 
 	mu.Unlock()
@@ -216,19 +306,18 @@ func TestQueueBucketLocksUnlocksOn429(t *testing.T) {
 	<- time.After(500 * time.Millisecond)
 	assert.Equal(t, int64(3), count)
 }
-
 // This test is non-deterministic and random in nature
 func TestQueueRandomPermutationsFireSimultaneously(t *testing.T) {
 	var count int64 = 0
 	mu := sync.RWMutex{}
 	mu.Lock()
-	genericProcessor := func(item *lib.QueueItem) (*http.Response, error) {
+	genericProcessor := func(item *lib.QueueItem) (*fasthttp.Response, error) {
 		mu.RLock()
-		req, _ := http.NewRequest(http.MethodGet, server_200_noheaders.URL, nil)
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			fmt.Println(err)
-		}
+		req := fasthttp.AcquireRequest()
+		defer fasthttp.ReleaseRequest(req)
+		req.SetRequestURI(server_200_noheaders.URL)
+		res := fasthttp.AcquireResponse()
+		fastclient.Do(req, res)
 		go atomic.AddInt64(&count, 1)
 		return res, nil
 	}
@@ -236,28 +325,33 @@ func TestQueueRandomPermutationsFireSimultaneously(t *testing.T) {
 	q := lib.NewRequestQueue(genericProcessor, 1000, 100)
 	for i := 0; i < 3000; i++ {
 		uri := GetRandomRoute()
-		req, err := http.NewRequest("GET", uri, nil)
-		if err != nil {
-			fmt.Println(err)
+		req := createRequest("GET", uri)
+		res := fasthttp.AcquireResponse()
+		ctx := &fasthttp.RequestCtx{
+			Request:  *req,
+			Response: *res,
 		}
-		go q.Queue(req, nil)
+		go func() {
+			q.Queue(ctx)
+			fasthttp.ReleaseRequest(req)
+			fasthttp.ReleaseResponse(res)
+		}()
 	}
 
 	mu.Unlock()
 	<- time.After(5000 * time.Millisecond)
 	assert.Equal(t, int64(3000), count)
-	runtime.GC()
 }
 
 // This test is non-deterministic and random in nature
 func TestQueueRandomPermutationsFireSequentially(t *testing.T) {
 	var count int64 = 0
-	genericProcessor := func(item *lib.QueueItem) (*http.Response, error) {
-		req, _ := http.NewRequest(http.MethodGet, server_200_noheaders.URL, nil)
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			fmt.Println(err)
-		}
+	genericProcessor := func(item *lib.QueueItem) (*fasthttp.Response, error) {
+		req := fasthttp.AcquireRequest()
+		defer fasthttp.ReleaseRequest(req)
+		req.SetRequestURI(server_200_noheaders.URL)
+		res := fasthttp.AcquireResponse()
+		fastclient.Do(req, res)
 		go atomic.AddInt64(&count, 1)
 		return res, nil
 	}
@@ -265,27 +359,31 @@ func TestQueueRandomPermutationsFireSequentially(t *testing.T) {
 	q := lib.NewRequestQueue(genericProcessor, 1000, 100)
 	for i := 0; i < 3000; i++ {
 		uri := GetRandomRoute()
-		req, err := http.NewRequest("GET", uri, nil)
-		if err != nil {
-			fmt.Println(err)
+		req := createRequest("GET", uri)
+		res := fasthttp.AcquireResponse()
+		ctx := &fasthttp.RequestCtx{
+			Request:  *req,
+			Response: *res,
 		}
-		q.Queue(req, nil)
+
+		q.Queue(ctx)
+		fasthttp.ReleaseRequest(req)
+		fasthttp.ReleaseResponse(res)
 	}
 
 	<- time.After(100 * time.Millisecond)
 	assert.Equal(t, int64(3000), count)
-	runtime.GC()
 }
 
 // This test is non-deterministic and random in nature
 func TestQueueRandomPermutationsFireRandomDelay(t *testing.T) {
 	var count int64 = 0
-	genericProcessor := func(item *lib.QueueItem) (*http.Response, error) {
-		req, _ := http.NewRequest(http.MethodGet, server_200_noheaders.URL, nil)
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			fmt.Println(err)
-		}
+	genericProcessor := func(item *lib.QueueItem) (*fasthttp.Response, error) {
+		req := fasthttp.AcquireRequest()
+		defer fasthttp.ReleaseRequest(req)
+		req.SetRequestURI(server_200_noheaders.URL)
+		res := fasthttp.AcquireResponse()
+		fastclient.Do(req, res)
 		go atomic.AddInt64(&count, 1)
 		return res, nil
 	}
@@ -296,20 +394,23 @@ func TestQueueRandomPermutationsFireRandomDelay(t *testing.T) {
 			// between 0 and 2ms
 			time.Sleep(time.Duration(rand.Intn(2000)) * time.Microsecond)
 			uri := GetRandomRoute()
-			req, err := http.NewRequest("GET", uri, nil)
-			if err != nil {
-				fmt.Println(err)
+			req := createRequest("GET", uri)
+			res := fasthttp.AcquireResponse()
+			ctx := &fasthttp.RequestCtx{
+				Request:  *req,
+				Response: *res,
 			}
-			q.Queue(req, nil)
+
+			q.Queue(ctx)
+			fasthttp.ReleaseRequest(req)
+			fasthttp.ReleaseResponse(res)
 		}()
 
 	}
 
 	<- time.After(2 * 3000 * time.Millisecond)
 	assert.Equal(t, int64(3000), count)
-	runtime.GC()
 }
-
 
 // This test is non-deterministic and random in nature
 func TestQueueFixedPermutationsFireRandomDelay(t *testing.T) {
@@ -318,12 +419,12 @@ func TestQueueFixedPermutationsFireRandomDelay(t *testing.T) {
 		routes = append(routes, GetRandomRoute())
 	}
 	var count int64 = 0
-	genericProcessor := func(item *lib.QueueItem) (*http.Response, error) {
-		req, _ := http.NewRequest(http.MethodGet, server_200_noheaders.URL, nil)
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			fmt.Println(err)
-		}
+	genericProcessor := func(item *lib.QueueItem) (*fasthttp.Response, error) {
+		req := fasthttp.AcquireRequest()
+		defer fasthttp.ReleaseRequest(req)
+		req.SetRequestURI(server_200_noheaders.URL)
+		res := fasthttp.AcquireResponse()
+		fastclient.Do(req, res)
 		go atomic.AddInt64(&count, 1)
 		return res, nil
 	}
@@ -334,18 +435,22 @@ func TestQueueFixedPermutationsFireRandomDelay(t *testing.T) {
 			// between 0 and 2ms
 			time.Sleep(time.Duration(rand.Intn(2000)) * time.Microsecond)
 			uri := routes[rand.Intn(len(routes))]
-			req, err := http.NewRequest("GET", uri, nil)
-			if err != nil {
-				fmt.Println(err)
+			req := createRequest("GET", uri)
+			res := fasthttp.AcquireResponse()
+			ctx := &fasthttp.RequestCtx{
+				Request:  *req,
+				Response: *res,
 			}
-			q.Queue(req, nil)
+
+			q.Queue(ctx)
+			fasthttp.ReleaseRequest(req)
+			fasthttp.ReleaseResponse(res)
 		}()
 
 	}
 
 	<- time.After(2 * 3000 * time.Millisecond)
 	assert.Equal(t, int64(3000), count)
-	runtime.GC()
 }
 
 // This test is non-deterministic and random in nature
@@ -355,12 +460,12 @@ func TestQueueFixedPermutationsFireRandomDelayAll429s(t *testing.T) {
 		routes = append(routes, GetRandomRoute())
 	}
 	var count int64 = 0
-	genericProcessor := func(item *lib.QueueItem) (*http.Response, error) {
-		req, _ := http.NewRequest(http.MethodGet, server_429_0_1_1.URL, nil)
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			fmt.Println(err)
-		}
+	genericProcessor := func(item *lib.QueueItem) (*fasthttp.Response, error) {
+		req := fasthttp.AcquireRequest()
+		defer fasthttp.ReleaseRequest(req)
+		req.SetRequestURI(server_429_0_1_1.URL)
+		res := fasthttp.AcquireResponse()
+		fastclient.Do(req, res)
 		go atomic.AddInt64(&count, 1)
 		return res, nil
 	}
@@ -371,16 +476,20 @@ func TestQueueFixedPermutationsFireRandomDelayAll429s(t *testing.T) {
 			// between 0 and 2ms
 			time.Sleep(time.Duration(rand.Intn(2000)) * time.Microsecond)
 			uri := routes[rand.Intn(len(routes))]
-			req, err := http.NewRequest("GET", uri, nil)
-			if err != nil {
-				fmt.Println(err)
+			req := createRequest("GET", uri)
+			res := fasthttp.AcquireResponse()
+			ctx := &fasthttp.RequestCtx{
+				Request:  *req,
+				Response: *res,
 			}
-			q.Queue(req, nil)
+
+			q.Queue(ctx)
+			fasthttp.ReleaseRequest(req)
+			fasthttp.ReleaseResponse(res)
 		}()
 
 	}
 
 	<- time.After(3 * 3000 * time.Millisecond)
 	assert.Equal(t, int64(3000), count)
-	runtime.GC()
 }

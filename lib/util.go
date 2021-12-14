@@ -1,11 +1,13 @@
 package lib
 
 import (
+	"bytes"
 	"encoding/base64"
 	"hash/crc64"
+	"reflect"
 	"strconv"
-	"strings"
 	"time"
+	"unsafe"
 )
 
 var table = crc64.MakeTable(crc64.ISO)
@@ -27,20 +29,33 @@ func GetSnowflakeCreatedAt(snowflake string) (time.Time, error) {
 	return time.Unix(int64(epoch)/1000, 0), nil
 }
 
-func GetBotId(token string) string {
+func GetBotId(token []byte) string {
 	var clientId string
-	if token == "" {
+	if len(token) == 0 {
 		clientId = "NoAuth"
 	} else {
-		token = strings.ReplaceAll(token, "Bot ", "")
-		token = strings.ReplaceAll(token, "Bearer ", "")
-		token = strings.Split(token, ".")[0]
-		token, err := base64.StdEncoding.DecodeString(token)
+		token = bytes.ReplaceAll(token, []byte("Bot "), []byte(""))
+		token = bytes.ReplaceAll(token, []byte("Bearer "), []byte(""))
+		token = bytes.Split(token, []byte("."))[0]
+		token, err := base64.StdEncoding.DecodeString(B2S(token))
 		if err != nil {
 			clientId = "Unknown"
 		} else {
-			clientId = string(token)
+			clientId = B2S(token)
 		}
 	}
 	return clientId
+}
+
+func B2S(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
+}
+
+func S2B(s string) (b []byte) {
+	bh := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	sh := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	bh.Data = sh.Data
+	bh.Cap = sh.Len
+	bh.Len = sh.Len
+	return b
 }
