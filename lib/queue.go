@@ -22,14 +22,12 @@ type QueueItem struct {
 
 type QueueChannel struct {
 	ch chan *QueueItem
-	lastUsed *time.Time
+	lastUsed time.Time
 }
 
 type RequestQueue struct {
 	sync.RWMutex
-	channelMu         sync.Mutex
 	globalLockedUntil *int64
-	sweepTicker       *time.Ticker
 	// bucket path hash as key
 	queues map[uint64]*QueueChannel
 	processor func(item *QueueItem) (*http.Response, error)
@@ -57,13 +55,11 @@ func NewRequestQueue(processor func(item *QueueItem) (*http.Response, error), gl
 }
 func (q *RequestQueue) sweep() {
 	q.Lock()
-	q.channelMu.Lock()
 	defer q.Unlock()
-	defer q.channelMu.Unlock()
 	logger.Info("Sweep start")
 	sweptEntries := 0
 	for key, val := range q.queues {
-		if time.Since(*val.lastUsed) > 10 * time.Minute {
+		if time.Since(val.lastUsed) > 10 * time.Minute {
 			close(val.ch)
 			delete(q.queues, key)
 			sweptEntries++
@@ -73,9 +69,9 @@ func (q *RequestQueue) sweep() {
 }
 
 func (q *RequestQueue) tickSweep() {
-	q.sweepTicker = time.NewTicker(5 * time.Minute)
+	t := time.NewTicker(5 * time.Minute)
 
-	for range q.sweepTicker.C {
+	for range t.C {
 		q.sweep()
 	}
 }
@@ -87,13 +83,12 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) (strin
 		"path": req.URL.Path,
 		"method": req.Method,
 	}).Trace("Inbound request")
-	q.RLock()
+
 	ch := q.getQueueChannel(path)
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
 	ch.ch <- &QueueItem{req, res, doneChan, errChan }
-	q.RUnlock()
 	select {
 	case resp := <-doneChan:
 		return path, resp, nil
@@ -104,8 +99,8 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) (strin
 
 func (q *RequestQueue) getQueueChannel(path string) *QueueChannel {
 	pathHash := HashCRC64(path)
-	q.channelMu.Lock()
-	defer q.channelMu.Unlock()
+	q.Lock()
+	defer q.Unlock()
 	t := time.Now()
 	ch, ok := q.queues[pathHash]
 	if !ok {
@@ -113,13 +108,13 @@ func (q *RequestQueue) getQueueChannel(path string) *QueueChannel {
 		// While we didn't hold the exclusive lock
 		ch, ok = q.queues[pathHash]
 		if !ok {
-			ch = &QueueChannel{ make(chan *QueueItem, q.bufferSize), &t }
+			ch = &QueueChannel{ make(chan *QueueItem, q.bufferSize), t }
 			q.queues[pathHash] = ch
 			// It's important that we only have 1 goroutine per channel
 			go q.subscribe(ch, path, pathHash)
 		}
 	} else {
-		ch.lastUsed = &t
+		ch.lastUsed = t
 	}
 	return ch
 }
@@ -139,7 +134,7 @@ func parseHeaders(headers *http.Header) (int64, int64, time.Duration, bool, erro
 	isGlobal := headers.Get("x-ratelimit-global") == "true"
 
 	var resetParsed float64
-	var reset time.Duration
+	var reset time.Duration = 0
 	var err error
 	if resetAfter != "" {
 		resetParsed, err = strconv.ParseFloat(resetAfter, 64)
@@ -156,7 +151,7 @@ func parseHeaders(headers *http.Header) (int64, int64, time.Duration, bool, erro
 	}
 
 	if limit == "" {
-		return 0, 0, 0, false, nil
+		return 0, 0, reset, false, nil
 	}
 
 	limitParsed, err := strconv.ParseInt(limit, 10, 32)

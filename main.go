@@ -17,12 +17,13 @@ var logger = logrus.New()
 var queues = make(map[string]*lib.RequestQueue)
 // Store invalid tokens to prevent a storm when a token gets reset
 var invalidTokens = make(map[string]bool)
-var queueMu = sync.Mutex{}
+var queueMu = sync.RWMutex{}
 var bufferSize int64 = 50
 
 type GenericHandler struct{}
 func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 	// No token will work and fall under "" on the map
+	queueMu.RLock()
 	token := req.Header.Get("Authorization")
 	_, isInvalid := invalidTokens[token]
 	if isInvalid {
@@ -31,9 +32,11 @@ func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) 
 		if err != nil {
 			logger.Error(err)
 		}
+		queueMu.RUnlock()
 		return
 	}
 	q, ok := queues[token]
+	queueMu.RUnlock()
 	if !ok {
 		queueMu.Lock()
 		// Check if it wasn't created while we didn't hold the lock

@@ -72,7 +72,7 @@ func TestQueueWorks(t *testing.T) {
 		go q.Queue(req, nil)
 	}
 
-	<- time.After(100 * time.Millisecond)
+	<- time.After(200 * time.Millisecond)
 	assert.Equal(t, int64(50), count)
 }
 
@@ -156,7 +156,7 @@ func TestQueueGlobalRatelimitWorks(t *testing.T) {
 	}
 
 	mu.Unlock()
-	<- time.After(100 * time.Millisecond)
+	<- time.After(250 * time.Millisecond)
 	assert.Equal(t, int64(50), count)
 	<- time.After(1100 * time.Millisecond)
 	assert.Equal(t, int64(70), count)
