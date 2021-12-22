@@ -257,7 +257,8 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		}
 		item.doneChan <- resp
 
-		if resp.StatusCode == 429 {
+		scope := resp.Header.Get("x-ratelimit-scope")
+		if resp.StatusCode == 429 && scope != "shared"{
 			logger.WithFields(logrus.Fields{
 				"prevRemaining": prevRem,
 				"prevResetAfter": prevReset,
