@@ -5,7 +5,7 @@ import (
 	_ "github.com/joho/godotenv/autoload"
 	"github.com/panjf2000/ants/v2"
 	"github.com/sirupsen/logrus"
-	"github.com/valyala/fasthttp"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -21,13 +21,15 @@ var invalidTokens = make(map[string]bool)
 var queueMu = sync.Mutex{}
 var bufferSize int64 = 50
 
-func HTTPHandler(ctx *fasthttp.RequestCtx) {
+
+type GenericHandler struct{}
+func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 	// No token will work and fall under "" on the map
-	token := lib.B2S(ctx.Request.Header.Peek("Authorization"))
+	token := req.Header.Get("Authorization")
 	_, isInvalid := invalidTokens[token]
 	if isInvalid {
-		ctx.Response.SetStatusCode(401)
-		_, err := ctx.Write([]byte("Known bad token - nirn-proxy"))
+		resp.WriteHeader(401)
+		_, err := resp.Write([]byte("Known bad token - nirn-proxy"))
 		if err != nil {
 			logger.Error(err)
 		}
@@ -45,8 +47,8 @@ func HTTPHandler(ctx *fasthttp.RequestCtx) {
 					invalidTokens[token] = true
 				}
 				logger.Error(err)
-				ctx.SetStatusCode(500)
-				_, err := ctx.Write([]byte("Unable to fetch gateway info - nirn-proxy"))
+				resp.WriteHeader(500)
+				_, err := resp.Write([]byte("Unable to fetch gateway info - nirn-proxy"))
 				if err != nil {
 					logger.Error(err)
 				}
@@ -54,14 +56,14 @@ func HTTPHandler(ctx *fasthttp.RequestCtx) {
 				return
 			}
 			q = lib.NewRequestQueue(lib.ProcessRequest, limit, bufferSize)
-			clientId := lib.GetBotId(ctx.Request.Header.Peek("Authorization"))
+			clientId := lib.GetBotId(token)
 			logger.WithFields(logrus.Fields{ "globalLimit": limit, "clientId": clientId, "bufferSize": bufferSize }).Info("Created new queue")
 			queues[token] = q
 		}
 		queueMu.Unlock()
 	}
 
-	err := q.Queue(ctx)
+	_, _, err := q.Queue(req, &resp)
 	if err != nil {
 		logger.Error(err)
 		lib.ErrorCounter.Inc()
@@ -107,6 +109,13 @@ func main()  {
 	logger.SetLevel(lvl)
 	logger.Info("Starting proxy on " + bindIp + ":" + port)
 	lib.SetLogger(logger)
+	s := &http.Server{
+		Addr:           bindIp + ":" + port,
+		Handler:        &GenericHandler{},
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   1 * time.Hour,
+		MaxHeaderBytes: 1 << 20,
+	}
 
 	if os.Getenv("ENABLE_PPROF") == "true" {
 		go lib.StartProfileServer()
@@ -131,7 +140,7 @@ func main()  {
 		}
 	}
 
-	err = fasthttp.ListenAndServe(bindIp + ":" + port, HTTPHandler)
+	err = s.ListenAndServe()
 	if err != nil {
 		panic(err)
 	}
