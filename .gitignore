@@ -2,3 +2,5 @@
 nirn-proxy
 nirn-proxy.exe
 .env
+*.txt
+*.log
