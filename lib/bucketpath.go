@@ -58,8 +58,7 @@ func GetMetricsPath(route string) string {
 }
 
 func GetOptimisticBucketPath(url string, method string) string {
-	bucket := strings.Builder{}
-	bucket.WriteByte('/')
+	var bucket = "/"
 	cleanUrl := strings.SplitN(url, "?", 1)[0]
 	if strings.HasPrefix(cleanUrl, "/api/v") {
 		cleanUrl = strings.ReplaceAll(cleanUrl, "/api/v", "")
@@ -81,17 +80,13 @@ func GetOptimisticBucketPath(url string, method string) string {
 		if numParts == 2 {
 			// Return the same bucket for all reqs to /channels/id
 			// In this case, the discord bucket is the same regardless of the id
-			bucket.WriteString(MajorChannels)
-			bucket.WriteString("/!")
-			return bucket.String()
+			bucket += MajorChannels + "/!"
+			return bucket
 		}
-		bucket.WriteString(MajorChannels)
-		bucket.WriteByte('/')
-		bucket.WriteString(parts[1])
+		bucket += MajorChannels + "/" + parts[1]
 		currMajor = MajorChannels
 	case MajorInvites:
-		bucket.WriteString(MajorInvites)
-		bucket.WriteString("/!")
+		bucket += MajorInvites + "/!"
 		currMajor = MajorInvites
 	case MajorGuilds:
 		// guilds/:guildId/channels share the same bucket for all guilds
@@ -102,14 +97,12 @@ func GetOptimisticBucketPath(url string, method string) string {
 	case MajorWebhooks:
 		fallthrough
 	default:
-		bucket.WriteString(parts[0])
-		bucket.WriteByte('/')
-		bucket.WriteString(parts[1])
+		bucket += parts[0] + "/" + parts[1]
 		currMajor = parts[0]
 	}
 
 	if numParts == 2 {
-		return bucket.String()
+		return bucket
 	}
 
 	// At this point, the major + id part is already accounted for
@@ -120,36 +113,35 @@ func GetOptimisticBucketPath(url string, method string) string {
 			if currMajor == MajorChannels && parts[idx - 1] == "messages" && method == "DELETE" {
 				createdAt, _ := GetSnowflakeCreatedAt(part)
 				if createdAt.Before(time.Now().Add(-1 * 14 * 24 * time.Hour)) {
-					bucket.WriteString("/!14dmsg")
+					bucket += "/!14dmsg"
 				} else if createdAt.After(time.Now().Add(-1 * 10 * time.Second)) {
-					bucket.WriteString("/!10smsg")
+					bucket += "/!10smsg"
 				}
 				continue
 			}
-			bucket.WriteString("/!")
+			bucket += "/!"
 		} else {
 			if currMajor == MajorChannels && part == "reactions" {
 				// reaction put/delete fall under a different bucket from other reaction endpoints
 				if method == "PUT" || method == "DELETE" {
-					bucket.WriteString("/reactions/!modify")
+					bucket += "/reactions/!modify"
 					break
 				}
 				//All other reaction endpoints falls under the same bucket, so it's irrelevant if the user
 				//is passing userid, emoji, etc.
-				bucket.WriteString("/reactions/!/!")
+				bucket += "/reactions/!/!"
 				//Reactions can only be followed by emoji/userid combo, since we don't care, break
 				break
 			}
 
 			// Strip webhook tokens and interaction tokens
 			if (currMajor == MajorWebhooks || currMajor == MajorInteractions) && len(part) >= 64 {
-				bucket.WriteString("/!")
+				bucket += "/!"
 				continue
 			}
-			bucket.WriteByte('/')
-			bucket.WriteString(part)
+			bucket += "/" + part
 		}
 	}
 
-	return bucket.String()
+	return bucket
 }
