@@ -6,7 +6,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +17,7 @@ var queues = make(map[string]*lib.RequestQueue)
 // Store invalid tokens to prevent a storm when a token gets reset
 var invalidTokens = make(map[string]bool)
 var queueMu = sync.RWMutex{}
-var bufferSize int64 = 50
+var bufferSize = 50
 
 type GenericHandler struct{}
 func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
@@ -72,43 +71,31 @@ func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) 
 	}
 }
 
-func main()  {
-	outboundIp := os.Getenv("OUTBOUND_IP")
-	timeoutEnv := os.Getenv("REQUEST_TIMEOUT")
-	var timeout int64 = 5000
-	if timeoutEnv != "" {
-		timeoutParsed, err := strconv.ParseInt(timeoutEnv, 10, 64)
-		if err != nil {
-			panic("Failed to parse REQUEST_TIMEOUT")
-		}
-		timeout = timeoutParsed
-	}
-
-	lib.ConfigureDiscordHTTPClient(outboundIp, time.Duration(timeout) * time.Millisecond)
-
-	logLevel := os.Getenv("LOG_LEVEL")
-	if logLevel == "" {
-		logLevel = "info"
-	}
+func setupLogger() {
+	logLevel := lib.EnvGet("LOG_LEVEL", "info")
 	lvl, err := logrus.ParseLevel(logLevel)
 
 	if err != nil {
 		panic("Failed to parse log level")
 	}
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	bindIp := os.Getenv("BIND_IP")
-	if bindIp == "" {
-		bindIp = "0.0.0.0"
-	}
-
 	logger.SetLevel(lvl)
-	logger.Info("Starting proxy on " + bindIp + ":" + port)
 	lib.SetLogger(logger)
+}
+
+func main()  {
+	outboundIp := os.Getenv("OUTBOUND_IP")
+
+	timeout := lib.EnvGetInt("REQUEST_TIMEOUT", 5000)
+
+	lib.ConfigureDiscordHTTPClient(outboundIp, time.Duration(timeout) * time.Millisecond)
+
+	port := lib.EnvGet("PORT", "8080")
+	bindIp := lib.EnvGet("BIND_IP", "0.0.0.0")
+
+	setupLogger()
+	logger.Info("Starting proxy on " + bindIp + ":" + port)
+
 	s := &http.Server{
 		Addr:           bindIp + ":" + port,
 		Handler:        &GenericHandler{},
@@ -122,25 +109,13 @@ func main()  {
 	}
 
 	if os.Getenv("ENABLE_METRICS") != "false" {
-		port := os.Getenv("METRICS_PORT")
-		if port == "" {
-			port = "9000"
-		}
+		port := lib.EnvGet("METRICS_PORT", "9000")
 		go lib.StartMetrics(bindIp + ":" + port)
 	}
 
-	bufferEnv := os.Getenv("BUFFER_SIZE")
-	if bufferEnv != "" {
-		parsedSize, err := strconv.ParseInt(bufferEnv, 10, 64)
-		if err != nil {
-			logger.Error(err)
-			logger.Warn("Failed to parse buffer size, using default")
-		} else {
-			bufferSize = parsedSize
-		}
-	}
+	bufferSize = lib.EnvGetInt("BUFFER_SIZE", 50)
 
-	err = s.ListenAndServe()
+	err := s.ListenAndServe()
 	if err != nil {
 		panic(err)
 	}

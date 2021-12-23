@@ -33,10 +33,10 @@ type RequestQueue struct {
 	processor func(item *QueueItem) (*http.Response, error)
 	globalBucket leakybucket.Bucket
 	// bufferSize Defines the size of the request channel buffer for each bucket
-	bufferSize int64
+	bufferSize int
 }
 
-func NewRequestQueue(processor func(item *QueueItem) (*http.Response, error), globalLimit uint, bufferSize int64) *RequestQueue {
+func NewRequestQueue(processor func(item *QueueItem) (*http.Response, error), globalLimit uint, bufferSize int) *RequestQueue {
 	memStorage := memory.New()
 	globalBucket, err := memStorage.Create("global", globalLimit, 1 * time.Second)
 	if err != nil {

@@ -15,7 +15,7 @@ import (
 )
 
 var client *http.Client = &http.Client{
-	Timeout: 60 * time.Second,
+	Timeout:       60 * time.Second,
 }
 
 var contextTimeout time.Duration
@@ -34,7 +34,17 @@ func createTransport(ip string) http.RoundTripper {
 		panic(err)
 	}
 
-	dialer := &net.Dialer{LocalAddr: addr}
+	dialer := &net.Dialer{
+		Timeout:       0,
+		Deadline:      time.Time{},
+		LocalAddr:     addr,
+		DualStack:     false,
+		FallbackDelay: 0,
+		KeepAlive:     0,
+		Resolver:      nil,
+		Cancel:        nil,
+		Control:       nil,
+	}
 
 	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		conn, err := dialer.Dial(network, addr)

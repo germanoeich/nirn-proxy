@@ -1,4 +1,4 @@
-package tests
+package e2e
 
 import (
 	"github.com/bwmarrin/snowflake"

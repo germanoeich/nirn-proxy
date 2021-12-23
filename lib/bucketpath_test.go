@@ -1,9 +1,8 @@
-package tests
+package lib
 
 import (
-	"fmt"
-	"github.com/germanoeich/nirn-proxy/lib"
-	"testing"
+"fmt"
+"testing"
 )
 
 func TestPaths(t *testing.T) {
@@ -35,7 +34,7 @@ func TestPaths(t *testing.T) {
 	for _, tt := range tests {
 		testname := fmt.Sprintf("%s-%s", tt.method, tt.path)
 		t.Run(testname, func(t *testing.T) {
-			bucket := lib.GetOptimisticBucketPath(tt.path, tt.method)
+			bucket := GetOptimisticBucketPath(tt.path, tt.method)
 			if bucket != tt.want {
 				t.Errorf("Expected %s but got %s", tt.want, bucket)
 			}
