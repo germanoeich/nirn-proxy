@@ -65,7 +65,7 @@ This will vary depending on your usage, how many unique routes you see, etc. For
 |-------------------|----------------------------------------|------------------------------------------------|
 |nirn_proxy_error   | none                                   | Counter for errors                             |
 |nirn_proxy_requests| method, status, route, clientId        | Summary that keeps track of all request metrics|
-
+|nirn_proxy_open_connections| none                           | Gauge for open client connections with the proxy|
 Note: 429s can produce two status: 429 Too Many Requests or 429 Shared. The latter is only produced for requests that return with the x-ratelimit-scope header set to "shared", which means they don't count towards the cloudflare firewall limit and thus should not be used for alerts, etc.
 
 ### Profiling

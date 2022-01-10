@@ -15,7 +15,7 @@ import (
 )
 
 var client *http.Client = &http.Client{
-	Timeout:       60 * time.Second,
+	Timeout: 60 * time.Second,
 }
 
 var contextTimeout time.Duration
@@ -28,22 +28,20 @@ func createTransport(ip string) http.RoundTripper {
 	if ip == "" {
 		return http.DefaultTransport
 	}
-	addr, err := net.ResolveTCPAddr("tcp", ip + ":0")
+	addr, err := net.ResolveTCPAddr("tcp", ip+":0")
 
 	if err != nil {
 		panic(err)
 	}
 
 	dialer := &net.Dialer{
-		Timeout:       0,
 		Deadline:      time.Time{},
 		LocalAddr:     addr,
-		DualStack:     false,
 		FallbackDelay: 0,
-		KeepAlive:     0,
 		Resolver:      nil,
-		Cancel:        nil,
 		Control:       nil,
+		Timeout:       30 * time.Second,
+		KeepAlive:     30 * time.Second,
 	}
 
 	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -51,7 +49,15 @@ func createTransport(ip string) http.RoundTripper {
 		return conn, err
 	}
 
-	transport := http.Transport{DialContext: dialContext}
+	transport := http.Transport{
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DialContext:           dialContext,
+		ResponseHeaderTimeout: 0,
+	}
 	return &transport
 }
 
@@ -59,6 +65,7 @@ func ConfigureDiscordHTTPClient(ip string, timeout time.Duration) {
 	transport := createTransport(ip)
 	client = &http.Client{
 		Transport: transport,
+		Timeout: 90 * time.Second,
 	}
 
 	contextTimeout = timeout
@@ -69,7 +76,7 @@ func GetBotGlobalLimit(token string) (uint, error) {
 		return math.MaxUint32, nil
 	}
 
-	bot, err := doDiscordReq(context.Background(),"/api/v9/gateway/bot", "GET", nil, map[string][]string{ "Authorization": {token} }, "")
+	bot, err := doDiscordReq(context.Background(), "/api/v9/gateway/bot", "GET", nil, map[string][]string{"Authorization": {token}}, "")
 
 	if err != nil {
 		return 0, err
@@ -98,7 +105,7 @@ func GetBotGlobalLimit(token string) (uint, error) {
 	if concurrency == 1 {
 		return 50, nil
 	} else {
-		if 25 * concurrency > 500 {
+		if 25*concurrency > 500 {
 			return uint(25 * concurrency), nil
 		}
 		return 500, nil
@@ -118,7 +125,7 @@ func copyHeader(dst, src http.Header) {
 }
 
 func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
-	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com" + path + "?" + query, body)
+	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com"+path+"?"+query, body)
 	discordReq.Header = header
 	if err != nil {
 		return nil, err
@@ -164,7 +171,7 @@ func ProcessRequest(item *QueueItem) (*http.Response, error) {
 
 	logger.WithFields(logrus.Fields{
 		"method": req.Method,
-		"path": req.URL.String(),
+		"path":   req.URL.String(),
 		"status": discordResp.Status,
 		// TODO: Remove this when 429s are not a problem anymore
 		"discordBucket": discordResp.Header.Get("x-ratelimit-bucket"),

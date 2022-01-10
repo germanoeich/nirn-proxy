@@ -18,6 +18,11 @@ var (
 		Help:        "Request histogram",
 		Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
 	}, []string{"method", "status", "route", "clientId"})
+
+	ConnectionsOpen = promauto.NewGauge(prometheus.GaugeOpts{
+		Name:        "nirn_proxy_open_connections",
+		Help:        "Gauge for client connections currently open with the proxy",
+	})
 )
 
 func StartMetrics(addr string) {

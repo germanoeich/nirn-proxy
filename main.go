@@ -21,6 +21,9 @@ var bufferSize = 50
 
 type GenericHandler struct{}
 func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
+	lib.ConnectionsOpen.Inc()
+	defer lib.ConnectionsOpen.Dec()
+
 	// No token will work and fall under "" on the map
 	queueMu.RLock()
 	token := req.Header.Get("Authorization")
