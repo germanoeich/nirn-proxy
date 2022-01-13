@@ -19,14 +19,18 @@
     ]
   },
   "editable": true,
-  "gnetId": null,
-  "graphTooltip": 0,
-  "id": 15,
-  "iteration": 1633464868679,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": 16,
+  "iteration": 1642101763496,
   "links": [],
+  "liveNow": false,
   "panels": [
     {
-      "datasource": "grafanacloud-dynogg-prom",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -59,7 +63,7 @@
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
-            "delta"
+            "lastNotNull"
           ],
           "fields": "",
           "values": false
@@ -67,11 +71,15 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "8.1.5-35396",
+      "pluginVersion": "8.3.3",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "exemplar": true,
-          "expr": "sum(nirn_proxy_requests_count{status=\"429 Too Many Requests\",clientId=~\"$clientId\"})",
+          "expr": "sum(increase(nirn_proxy_requests_count{status=\"429 Too Many Requests\",clientId=~\"$clientId\"}[1h]))",
           "interval": "",
           "legendFormat": "",
           "queryType": "randomWalk",
@@ -83,7 +91,10 @@
       "type": "stat"
     },
     {
-      "datasource": "grafanacloud-dynogg-prom",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -124,11 +135,15 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "8.1.5-35396",
+      "pluginVersion": "8.3.3",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "exemplar": true,
-          "expr": "sum (rate(nirn_proxy_requests_count{clientId=~\"$clientId\"}[1m]))",
+          "expr": "sum (rate(nirn_proxy_requests_count{clientId=~\"$clientId\"}[$__rate_interval]))",
           "interval": "",
           "legendFormat": "",
           "refId": "A"
@@ -138,7 +153,10 @@
       "type": "stat"
     },
     {
-      "datasource": "grafanacloud-dynogg-prom",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -185,7 +203,8 @@
                 "value": 80
               }
             ]
-          }
+          },
+          "unit": "reqps"
         },
         "overrides": []
       },
@@ -208,14 +227,22 @@
       },
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "exemplar": true,
-          "expr": "sum(rate(nirn_proxy_requests_count{clientId=~\"$clientId\"}[1m])) by (clientId)",
+          "expr": "sum(rate(nirn_proxy_requests_count{clientId=~\"$clientId\"}[$__rate_interval])) by (clientId)",
           "interval": "",
           "legendFormat": "{{clientId}}",
           "queryType": "randomWalk",
           "refId": "A"
         },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "exemplar": true,
           "expr": "sum(rate(nirn_proxy_requests_count{clientId=~\"$clientId\"}[1m]))",
           "hide": false,
@@ -228,7 +255,10 @@
       "type": "timeseries"
     },
     {
-      "datasource": "grafanacloud-dynogg-prom",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -275,7 +305,8 @@
                 "value": 80
               }
             ]
-          }
+          },
+          "unit": "reqps"
         },
         "overrides": []
       },
@@ -298,6 +329,10 @@
       },
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "exemplar": true,
           "expr": "sum by(method, status, route) (rate(nirn_proxy_requests_count{status=\"429 Too Many Requests\",clientId=~\"$clientId\"}[$__rate_interval]))",
           "interval": "",
@@ -310,7 +345,10 @@
       "type": "timeseries"
     },
     {
-      "datasource": "grafanacloud-dynogg-prom",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -359,7 +397,7 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "reqps"
         },
         "overrides": []
       },
@@ -382,6 +420,10 @@
       },
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "exemplar": true,
           "expr": "sum by(method, status, route) (rate(nirn_proxy_requests_count{status=~\"500 Internal Server Error|501 Not Implemented|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|505 HTTP Version Not Supported|506 Variant Also Negotiates|507 Insufficient Storage|508 Loop Detected|510 Not Extended|511 Network Authentication Required\", clientId=~\"$clientId\"}[$__rate_interval]))",
           "interval": "",
@@ -394,7 +436,10 @@
       "type": "timeseries"
     },
     {
-      "datasource": "grafanacloud-dynogg-prom",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -441,7 +486,8 @@
                 "value": 80
               }
             ]
-          }
+          },
+          "unit": "reqps"
         },
         "overrides": []
       },
@@ -464,8 +510,12 @@
       },
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "exemplar": true,
-          "expr": "sum by (status) (rate(nirn_proxy_requests_count{clientId=~\"$clientId\"}[1m]))",
+          "expr": "sum by (status) (rate(nirn_proxy_requests_count{clientId=~\"$clientId\"}[$__rate_interval]))",
           "interval": "",
           "legendFormat": "{{status}}",
           "queryType": "randomWalk",
@@ -476,7 +526,10 @@
       "type": "timeseries"
     },
     {
-      "datasource": "grafanacloud-dynogg-prom",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -523,7 +576,8 @@
                 "value": 80
               }
             ]
-          }
+          },
+          "unit": "reqps"
         },
         "overrides": []
       },
@@ -546,6 +600,10 @@
       },
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "exemplar": true,
           "expr": "sum by (route) (rate(nirn_proxy_requests_count{clientId=~\"$clientId\"}[$__rate_interval]))",
           "interval": "",
@@ -558,176 +616,10 @@
       "type": "timeseries"
     },
     {
-      "datasource": "grafanacloud-dynogg-prom",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "noValue": "0",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 23
-      },
-      "id": 4,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "single"
-        }
-      },
-      "targets": [
-        {
-          "exemplar": true,
-          "expr": "sum by(method, route) (nirn_proxy_requests{quantile=\"0.9\",clientId=~\"$clientId\"})",
-          "instant": false,
-          "interval": "1m",
-          "intervalFactor": 1,
-          "legendFormat": "{{method}} {{route}}",
-          "queryType": "randomWalk",
-          "refId": "A"
-        }
-      ],
-      "title": "Latency 90th",
-      "type": "timeseries"
-    },
-    {
-      "datasource": "grafanacloud-dynogg-prom",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 23
-      },
-      "id": 12,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "single"
-        }
-      },
-      "targets": [
-        {
-          "exemplar": true,
-          "expr": "sum by(method, route) (nirn_proxy_requests{quantile=\"0.99\",clientId=~\"$clientId\"})",
-          "interval": "",
-          "legendFormat": "{{method}} {{route}}",
-          "queryType": "randomWalk",
-          "refId": "A"
-        }
-      ],
-      "title": "Latency 99th",
-      "type": "timeseries"
-    },
-    {
-      "datasource": "grafanacloud-dynogg-prom",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -781,9 +673,9 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 24,
+        "w": 12,
         "x": 0,
-        "y": 31
+        "y": 23
       },
       "id": 11,
       "options": {
@@ -798,26 +690,343 @@
       },
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "exemplar": true,
-          "expr": "sum by(method, route) (nirn_proxy_requests{quantile=\"0.5\",clientId=~\"$clientId\"})",
+          "expr": "histogram_quantile(0.9, sum(rate(nirn_proxy_requests_bucket{clientId=~\"$clientId\"}[5m])) by (le))",
+          "interval": "",
+          "legendFormat": "90th",
+          "queryType": "randomWalk",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "exemplar": true,
+          "expr": "histogram_quantile(0.95, sum(rate(nirn_proxy_requests_bucket{clientId=~\"$clientId\"}[5m])) by (le))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "95th",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "exemplar": true,
+          "expr": "histogram_quantile(0.99, sum(rate(nirn_proxy_requests_bucket{clientId=~\"$clientId\"}[5m])) by (le))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "99th",
+          "refId": "C"
+        }
+      ],
+      "title": "Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "exemplar": true,
+          "expr": "histogram_quantile(0.90, sum(rate(nirn_proxy_requests_bucket{clientId=~\"$clientId\"}[5m])) by (le, method, route))",
+          "instant": false,
+          "interval": "1m",
+          "intervalFactor": 1,
+          "legendFormat": "{{method}} {{route}}",
+          "queryType": "randomWalk",
+          "refId": "A"
+        }
+      ],
+      "title": "Latency 90th",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "exemplar": true,
+          "expr": "histogram_quantile(0.99, sum(rate(nirn_proxy_requests_bucket{clientId=~\"$clientId\"}[5m])) by (le, method, route))",
           "interval": "",
           "legendFormat": "{{method}} {{route}}",
           "queryType": "randomWalk",
           "refId": "A"
         }
       ],
-      "title": "Latency Avg",
+      "title": "Latency 99th",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "id": 22,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "exemplar": true,
+          "expr": "sum(nirn_proxy_open_connections)",
+          "interval": "",
+          "legendFormat": "Connections Open",
+          "refId": "A"
+        }
+      ],
+      "title": "Open connections",
       "type": "timeseries"
     }
   ],
   "refresh": "10s",
-  "schemaVersion": 30,
+  "schemaVersion": 34,
   "style": "dark",
   "tags": [],
   "templating": {
     "list": [
       {
-        "allValue": null,
+        "current": {
+          "selected": false,
+          "text": "Prometheus",
+          "value": "Prometheus"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
         "current": {
           "selected": true,
           "text": [
@@ -827,13 +1036,13 @@
             "$__all"
           ]
         },
-        "datasource": "grafanacloud-dynogg-prom",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
         "definition": "label_values(nirn_proxy_requests_count, clientId)",
-        "description": null,
-        "error": null,
         "hide": 0,
         "includeAll": true,
-        "label": null,
         "multi": true,
         "name": "clientId",
         "options": [],
@@ -850,12 +1059,13 @@
     ]
   },
   "time": {
-    "from": "now-6h",
+    "from": "now-1h",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "",
   "title": "Nirn Proxy",
   "uid": "LFGoppS7k",
-  "version": 12
+  "version": 26,
+  "weekStart": ""
 }
