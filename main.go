@@ -24,9 +24,9 @@ func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) 
 	lib.ConnectionsOpen.Inc()
 	defer lib.ConnectionsOpen.Dec()
 
-	// No token will work and fall under "" on the map
-	queueMu.RLock()
 	token := req.Header.Get("Authorization")
+	queueMu.RLock()
+	// No token will work and fall under "" on the map
 	_, isInvalid := invalidTokens[token]
 	if isInvalid {
 		resp.WriteHeader(401)

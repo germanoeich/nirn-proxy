@@ -13,10 +13,10 @@ var (
 		Help: "The total number of errors when processing requests",
 	})
 
-	RequestSummary = prometheus.NewSummaryVec(prometheus.SummaryOpts{
+	RequestHistogram = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:        "nirn_proxy_requests",
 		Help:        "Request histogram",
-		Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
+		Buckets: 	 []float64{.1, .25, 1, 2.5, 5, 20},
 	}, []string{"method", "status", "route", "clientId"})
 
 	ConnectionsOpen = promauto.NewGauge(prometheus.GaugeOpts{
@@ -26,7 +26,7 @@ var (
 )
 
 func StartMetrics(addr string) {
-	prometheus.MustRegister(RequestSummary)
+	prometheus.MustRegister(RequestHistogram)
 	http.Handle("/metrics", promhttp.Handler())
 	logger.Info("Starting metrics server on " + addr)
 	err := http.ListenAndServe(addr, nil)

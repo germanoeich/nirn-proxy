@@ -147,7 +147,7 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 				status = "429 Shared"
 			}
 		}
-		RequestSummary.With(map[string]string{"route": route, "status": status, "method": method, "clientId": clientId}).Observe(elapsed)
+		RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": clientId}).Observe(elapsed)
 	}
 	return discordResp, err
 }
@@ -156,7 +156,8 @@ func ProcessRequest(item *QueueItem) (*http.Response, error) {
 	req := item.Req
 	res := *item.Res
 
-	ctx, _ := context.WithTimeout(context.Background(), contextTimeout)
+	ctx, cancel := context.WithTimeout(req.Context(), contextTimeout)
+	defer cancel()
 	discordResp, err := doDiscordReq(ctx, req.URL.Path, req.Method, req.Body, req.Header.Clone(), req.URL.RawQuery)
 
 	if err != nil {
