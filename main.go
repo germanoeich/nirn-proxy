@@ -58,7 +58,10 @@ func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) 
 				queueMu.Unlock()
 				return
 			}
-			q = lib.NewRequestQueue(lib.ProcessRequest, limit, bufferSize)
+
+			user, _ := lib.GetBotUser(token)
+
+			q = lib.NewRequestQueue(lib.ProcessRequest, limit, bufferSize, user)
 			clientId := lib.GetBotId(token)
 			logger.WithFields(logrus.Fields{ "globalLimit": limit, "clientId": clientId, "bufferSize": bufferSize }).Info("Created new queue")
 			queues[token] = q

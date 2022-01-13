@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"context"
 	"errors"
 	"github.com/Clever/leakybucket"
 	"github.com/Clever/leakybucket/memory"
@@ -30,17 +31,25 @@ type RequestQueue struct {
 	globalLockedUntil *int64
 	// bucket path hash as key
 	queues map[uint64]*QueueChannel
-	processor func(item *QueueItem) (*http.Response, error)
+	processor func(ctx context.Context, item *QueueItem) (*http.Response, error)
 	globalBucket leakybucket.Bucket
 	// bufferSize Defines the size of the request channel buffer for each bucket
 	bufferSize int
+	user *BotUserResponse
+	identifier string
 }
 
-func NewRequestQueue(processor func(item *QueueItem) (*http.Response, error), globalLimit uint, bufferSize int) *RequestQueue {
+
+func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http.Response, error), globalLimit uint, bufferSize int, user *BotUserResponse) *RequestQueue {
 	memStorage := memory.New()
 	globalBucket, err := memStorage.Create("global", globalLimit, 1 * time.Second)
 	if err != nil {
 		panic(err)
+	}
+
+	identifier := "NoAuth"
+	if user != nil {
+		identifier = user.Username + "#" + user.Discrim
 	}
 
 	ret := &RequestQueue{
@@ -49,10 +58,14 @@ func NewRequestQueue(processor func(item *QueueItem) (*http.Response, error), gl
 		globalBucket:      globalBucket,
 		globalLockedUntil: new(int64),
 		bufferSize: 	   bufferSize,
+		user: user,
+		identifier: identifier,
 	}
+
 	go ret.tickSweep()
 	return ret
 }
+
 func (q *RequestQueue) sweep() {
 	q.Lock()
 	defer q.Unlock()
@@ -232,7 +245,8 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 
 		q.takeGlobal(path)
 
-		resp, err := q.processor(item)
+		ctx := context.WithValue(item.Req.Context(), "identifier", q.identifier)
+		resp, err := q.processor(ctx, item)
 		if err != nil {
 			item.errChan <- err
 			continue

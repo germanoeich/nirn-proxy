@@ -24,6 +24,12 @@ type BotGatewayResponse struct {
 	SessionStartLimit map[string]int `json:"session_start_limit"`
 }
 
+type BotUserResponse struct {
+	Id string `json:"id"`
+	Username string `json:"username"`
+	Discrim string `json:"discriminator"`
+}
+
 func createTransport(ip string) http.RoundTripper {
 	if ip == "" {
 		return http.DefaultTransport
@@ -112,6 +118,36 @@ func GetBotGlobalLimit(token string) (uint, error) {
 	}
 }
 
+func GetBotUser(token string) (*BotUserResponse, error) {
+	if token == "" {
+		return nil, errors.New("no token provided")
+	}
+
+	bot, err := doDiscordReq(context.Background(), "/api/v9/users/@me", "GET", nil, map[string][]string{"Authorization": {token}}, "")
+
+	if err != nil {
+		return nil, err
+	}
+
+	switch {
+	case bot.StatusCode == 429:
+		return nil, errors.New("429 on users/@me")
+	case bot.StatusCode == 500:
+		return nil, errors.New("500 on users/@me")
+	}
+
+	body, _ := ioutil.ReadAll(bot.Body)
+
+	var s BotUserResponse
+
+	err = json.Unmarshal(body, &s)
+	if err != nil {
+		return nil, err
+	}
+
+	return &s, nil
+}
+
 func copyHeader(dst, src http.Header) {
 	dst["Date"] = nil
 	dst["Content-Type"] = nil
@@ -125,16 +161,20 @@ func copyHeader(dst, src http.Header) {
 }
 
 func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
-	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com"+path+"?"+query, body)
+	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com" + path + "?" + query, body)
 	discordReq.Header = header
 	if err != nil {
 		return nil, err
 	}
 
-	token := discordReq.Header.Get("Authorization")
-	clientId := GetBotId(token)
 	startTime := time.Now()
 	discordResp, err := client.Do(discordReq)
+
+	identifier := ctx.Value("identifier")
+	if identifier == nil {
+		// Queues always have an identifier, if there's none in the context, we called the method from outside a queue
+		identifier = "Internal"
+	}
 
 	if err == nil {
 		route := GetMetricsPath(path)
@@ -147,16 +187,16 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 				status = "429 Shared"
 			}
 		}
-		RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": clientId}).Observe(elapsed)
+		RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": identifier.(string)}).Observe(elapsed)
 	}
 	return discordResp, err
 }
 
-func ProcessRequest(item *QueueItem) (*http.Response, error) {
+func ProcessRequest(ctx context.Context, item *QueueItem) (*http.Response, error) {
 	req := item.Req
 	res := *item.Res
 
-	ctx, cancel := context.WithTimeout(req.Context(), contextTimeout)
+	ctx, cancel := context.WithTimeout(ctx, contextTimeout)
 	defer cancel()
 	discordResp, err := doDiscordReq(ctx, req.URL.Path, req.Method, req.Body, req.Header.Clone(), req.URL.RawQuery)
 
