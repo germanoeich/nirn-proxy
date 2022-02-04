@@ -37,6 +37,7 @@ type RequestQueue struct {
 	bufferSize int
 	user *BotUserResponse
 	identifier string
+	isTokenInvalid *int64
 }
 
 
@@ -60,6 +61,7 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 		bufferSize: 	   bufferSize,
 		user: user,
 		identifier: identifier,
+		isTokenInvalid: new(int64),
 	}
 
 	go ret.tickSweep()
@@ -212,8 +214,23 @@ func return404webhook(item *QueueItem) {
 	body := "{\n  \"message\": \"Unknown Webhook\",\n  \"code\": 10015\n}"
 	_, err := res.Write([]byte(body))
 	if err != nil {
+		item.errChan <- err
 		return
 	}
+	item.doneChan <- nil
+
+}
+
+func return401(item *QueueItem) {
+	res := *item.Res
+	res.WriteHeader(401)
+	body := "{\n\t\"message\": \"401: Unauthorized\",\n\t\"code\": 0\n}"
+	_, err := res.Write([]byte(body))
+	if err != nil {
+		item.errChan <- err
+		return
+	}
+	item.doneChan <- nil
 }
 
 func isInteraction(url string) bool {
@@ -239,11 +256,15 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 	for item := range ch.ch {
 		if ret404 {
 			return404webhook(item)
-			item.doneChan <- nil
 			continue
 		}
 
 		q.takeGlobal(path)
+
+		if atomic.LoadInt64(q.isTokenInvalid) > 0 {
+			return401(item)
+			continue
+		}
 
 		ctx := context.WithValue(item.Req.Context(), "identifier", q.identifier)
 		resp, err := q.processor(ctx, item)
@@ -296,6 +317,11 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 				"method": item.Req.Method,
 			}).Info("Setting fail fast 404 for webhook")
 			ret404 = true
+		}
+
+		if resp.StatusCode == 401 {
+			// Permanently lock this queue
+			atomic.StoreInt64(q.globalLockedUntil, 999)
 		}
 		if remaining == 0 || resp.StatusCode == 429 {
 			time.Sleep(time.Until(time.Now().Add(resetAfter)))
