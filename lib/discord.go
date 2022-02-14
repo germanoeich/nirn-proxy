@@ -10,13 +10,10 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 )
 
-var client *http.Client = &http.Client{
-	Timeout: 60 * time.Second,
-}
+var client *http.Client
 
 var contextTimeout time.Duration
 
@@ -57,10 +54,10 @@ func createTransport(ip string) http.RoundTripper {
 
 	transport := http.Transport{
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
+		MaxIdleConns:          1000,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
+		ExpectContinueTimeout: 2 * time.Second,
 		DialContext:           dialContext,
 		ResponseHeaderTimeout: 0,
 	}
@@ -90,7 +87,8 @@ func GetBotGlobalLimit(token string) (uint, error) {
 
 	switch {
 	case bot.StatusCode == 401:
-		return 0, errors.New("invalid token - nirn-proxy")
+		// In case a 401 is encountered, we return math.MaxUint32 to allow requests through to fail fast
+		return math.MaxUint32, errors.New("invalid token - nirn-proxy")
 	case bot.StatusCode == 429:
 		return 0, errors.New("429 on gateway/bot")
 	case bot.StatusCode == 500:
@@ -146,18 +144,6 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 	}
 
 	return &s, nil
-}
-
-func copyHeader(dst, src http.Header) {
-	dst["Date"] = nil
-	dst["Content-Type"] = nil
-	for k, vv := range src {
-		for _, v := range vv {
-			if k != "Content-Length" {
-				dst[strings.ToLower(k)] = []string{v}
-			}
-		}
-	}
 }
 
 func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
@@ -218,17 +204,8 @@ func ProcessRequest(ctx context.Context, item *QueueItem) (*http.Response, error
 		"discordBucket": discordResp.Header.Get("x-ratelimit-bucket"),
 	}).Debug("Discord request")
 
-	body, err := ioutil.ReadAll(discordResp.Body)
-	if err != nil {
-		res.WriteHeader(500)
-		_, _ = res.Write([]byte(err.Error()))
-		return nil, err
-	}
+	err = CopyResponseToResponseWriter(discordResp, item.Res)
 
-	copyHeader(res.Header(), discordResp.Header)
-	res.WriteHeader(discordResp.StatusCode)
-
-	_, err = res.Write(body)
 	if err != nil {
 		return nil, err
 	}

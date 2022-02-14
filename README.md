@@ -1,7 +1,11 @@
 # Nirn-proxy
-Nirn is a transparent & dynamic HTTP proxy that handles Discord ratelimits for you and exports meaningful prometheus metrics. It is considered beta software but is being used in production by [Dyno](https://dyno.gg) on the scale of hundreds of requests per second.
+Nirn-proxy is a highly available, transparent & dynamic HTTP proxy that handles Discord ratelimits for you and exports meaningful prometheus metrics. It is considered beta software but is being used in production by [Dyno](https://dyno.gg) on the scale of hundreds of requests per second.
+
+It is designed to be minimally invasive and exploits common library patterns to make the adoption as simple as a URL change.
 
 #### Features
+
+- Highly available, horizontally scalable
 - Transparent ratelimit handling, per-route and global
 - Multi-bot support with automatic detection for elevated REST limits (big bot sharding)
 - Works with any API version (Also supports using two or more versions for the same bot)
@@ -17,17 +21,20 @@ The proxy sits between the client and discord. Essentially, instead of pointing 
 
 Configuration options are
 
-| Variable        | Value  | Default |
-|-----------------|--------|---------|
-| LOG_LEVEL       | panic, fatal, error, warn, info, debug, trace | info |
-| PORT            | number | 8080    |
-| METRICS_PORT    | number | 9000    |
-| ENABLE_METRICS  | boolean| true    |
-| ENABLE_PPROF    | boolean| false   |
-| BUFFER_SIZE     | number | 50      |
-| OUTBOUND_IP     | string | ""      |
-| BIND_IP         | string | 0.0.0.0 |
-| REQUEST_TIMEOUT | number (milliseconds) | 5000    |
+| Variable        | Value                                         | Default                 |
+|-----------------|-----------------------------------------------|-------------------------|
+| LOG_LEVEL       | panic, fatal, error, warn, info, debug, trace | info                    |
+| PORT            | number                                        | 8080                    |
+| METRICS_PORT    | number                                        | 9000                    |
+| ENABLE_METRICS  | boolean                                       | true                    |
+| ENABLE_PPROF    | boolean                                       | false                   |
+| BUFFER_SIZE     | number                                        | 50                      |
+| OUTBOUND_IP     | string                                        | ""                      |
+| BIND_IP         | string                                        | 0.0.0.0                 |
+| REQUEST_TIMEOUT | number (milliseconds)                         | 5000                    |
+| CLUSTER_PORT    | number                                        | 7946                    |
+| CLUSTER_MEMBERS | string list (comma separated)                 | ""                      |
+| CLUSTER_DNS     | string                                        | ""                      |
 
 Information on each config var can be found [here](https://github.com/germanoeich/nirn-proxy/blob/main/CONFIG.md)
 
@@ -61,13 +68,36 @@ This will vary depending on your usage, how many unique routes you see, etc. For
 
 ### Metrics
 
-| Key               | Labels                                 | Description                                    |
-|-------------------|----------------------------------------|------------------------------------------------|
-|nirn_proxy_error   | none                                   | Counter for errors                             |
-|nirn_proxy_requests| method, status, route, clientId        | Histogram that keeps track of all request metrics|
-|nirn_proxy_open_connections| none                           | Gauge for open client connections with the proxy|
+| Key                                | Labels                                 | Description                                                |
+|------------------------------------|----------------------------------------|------------------------------------------------------------|
+|nirn_proxy_error                    | none                                   | Counter for errors                                         |
+|nirn_proxy_requests                 | method, status, route, clientId        | Histogram that keeps track of all request metrics          |
+|nirn_proxy_open_connections         | none                                   | Gauge for open client connections with the proxy           |
+|nirn_proxy_requests_routed_sent     | none                                   | Counter for requests routed to other nodes                 |
+|nirn_proxy_requests_routed_received | none                                   | Counter for requests received from other nodes             |
+|nirn_proxy_requests_routed_error    | none                                   | Counter for requests routed that failed                    |
 
 Note: 429s can produce two status: 429 Too Many Requests or 429 Shared. The latter is only produced for requests that return with the x-ratelimit-scope header set to "shared", which means they don't count towards the cloudflare firewall limit and thus should not be used for alerts, etc.
+
+### High availability
+
+The proxy can be run in a cluster by setting either `CLUSTER_MEMBERS` or `CLUSTER_DNS` env vars. When in cluster mode, all nodes are a suitable gateway for all requests and the proxy will route requests consistently using the bucket hash. 
+
+It's recommended that all nodes are reachable through LAN. Please reach out if a WAN cluster is desired for your use case.
+
+If a node fails, there is a brief period where it will be unhealthy but requests will still be routed to it. When these requests fail, the proxy will mock a 429 to send back to the user. The 429 will signal the client to wait 1s and will have a custom header `generated-by-proxy`. This is done in order to allow seamless retries when a member fails. If you want to backoff, use the custom header to override your lib retry logic.
+
+The cluster uses [SWIM](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf), which is an [AP protocol](https://en.wikipedia.org/wiki/CAP_theorem) and is powered by hashicorps excellent [memberlist](https://github.com/hashicorp/memberlist) implementation.
+
+Being an AP system means that the cluster will tolerate a network partition and needs no quorum to function. In case a network partition occurs, you'll have two clusters running independently, which may or may not be desirable. Configure your network accordingly.
+
+In case you want to specifically target a node (i.e, for troubleshooting), set the `nirn-routed-to` header on the request. The value doesn't matter. This will prevent the node from routing the request to another node.
+
+During recovery periods or when nodes join/leave the cluster, you might notice increased 429s. This is expected since the hashing table is changing as members change. Once the cluster settles into a stable state, it'll go back to normal.
+
+Global ratelimits are handled by a single node on the cluster, however this affinity is soft. There is no concept of leader or elections and if this node leaves, the cluster will simply pick a new one. This is a bottleneck and might increase tail latency, but the other options were either too complex, required an external storage, or would require quorum for the proxy to function. Webhooks and other requests with no token bypass this mechanism completely.
+
+The best deployment strategy for the cluster is to kill nodes one at a time, preferably with the replacement node already up.
 
 ### Profiling
 

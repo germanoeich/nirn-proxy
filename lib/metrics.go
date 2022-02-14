@@ -23,6 +23,21 @@ var (
 		Name:        "nirn_proxy_open_connections",
 		Help:        "Gauge for client connections currently open with the proxy",
 	})
+
+	RequestsRoutedSent = promauto.NewCounter(prometheus.CounterOpts{
+		Name:		"nirn_proxy_requests_routed_sent",
+		Help:		"Counter for requests routed from this node into other nodes",
+	})
+
+	RequestsRoutedRecv = promauto.NewCounter(prometheus.CounterOpts{
+		Name:		"nirn_proxy_requests_routed_received",
+		Help:		"Counter for requests received from other nodes",
+	})
+
+	RequestsRoutedError = promauto.NewCounter(prometheus.CounterOpts{
+		Name:		"nirn_proxy_requests_routed_error",
+		Help:		"Counter for failed requests routed from this node",
+	})
 )
 
 func StartMetrics(addr string) {

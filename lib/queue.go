@@ -38,14 +38,37 @@ type RequestQueue struct {
 	user *BotUserResponse
 	identifier string
 	isTokenInvalid *int64
+	botLimit uint
 }
 
 
-func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http.Response, error), globalLimit uint, bufferSize int, user *BotUserResponse) *RequestQueue {
+func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http.Response, error), token string, bufferSize int) (*RequestQueue, error) {
+	limit, err := GetBotGlobalLimit(token)
 	memStorage := memory.New()
-	globalBucket, err := memStorage.Create("global", globalLimit, 1 * time.Second)
+	globalBucket, _ := memStorage.Create("global", limit, 1 * time.Second)
 	if err != nil {
-		panic(err)
+		if strings.HasPrefix(err.Error(), "invalid token") {
+			// Return a queue that will only return 401s
+			var invalid = new(int64)
+			*invalid = 999
+			return &RequestQueue{
+				queues:            make(map[uint64]*QueueChannel),
+				processor:         processor,
+				globalBucket:      globalBucket,
+				globalLockedUntil: new(int64),
+				bufferSize: 	   bufferSize,
+				user: 			   nil,
+				identifier: 	   "InvalidTokenQueue",
+				isTokenInvalid:    invalid,
+				botLimit: limit,
+			}, nil
+		}
+		return nil, err
+	}
+
+	user, err := GetBotUser(token)
+	if err != nil && token != "" {
+		return nil, err
 	}
 
 	identifier := "NoAuth"
@@ -59,13 +82,16 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 		globalBucket:      globalBucket,
 		globalLockedUntil: new(int64),
 		bufferSize: 	   bufferSize,
-		user: user,
-		identifier: identifier,
-		isTokenInvalid: new(int64),
+		user: 			   user,
+		identifier: 	   identifier,
+		isTokenInvalid:    new(int64),
+		botLimit: limit,
 	}
 
+	logger.WithFields(logrus.Fields{ "globalLimit": limit, "identifier": identifier, "bufferSize": bufferSize }).Info("Created new queue")
+
 	go ret.tickSweep()
-	return ret
+	return ret, nil
 }
 
 func (q *RequestQueue) sweep() {
@@ -91,15 +117,14 @@ func (q *RequestQueue) tickSweep() {
 	}
 }
 
-func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) (string, *http.Response, error) {
-	path := GetOptimisticBucketPath(req.URL.Path, req.Method)
+func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash uint64) (string, *http.Response, error) {
 	logger.WithFields(logrus.Fields{
 		"bucket": path,
 		"path": req.URL.Path,
 		"method": req.Method,
 	}).Trace("Inbound request")
 
-	ch := q.getQueueChannel(path)
+	ch := q.getQueueChannel(path, pathHash)
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
@@ -112,8 +137,7 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter) (strin
 	}
 }
 
-func (q *RequestQueue) getQueueChannel(path string) *QueueChannel {
-	pathHash := HashCRC64(path)
+func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChannel {
 	q.Lock()
 	defer q.Unlock()
 	t := time.Now()
@@ -185,6 +209,7 @@ func parseHeaders(headers *http.Header) (int64, int64, time.Duration, bool, erro
 func (q *RequestQueue) takeGlobal(path string) {
 takeGlobal:
 	waitTime := atomic.LoadInt64(q.globalLockedUntil)
+
 	if waitTime > 0 {
 		logger.WithFields(logrus.Fields{
 			"bucket": path,
@@ -196,6 +221,7 @@ takeGlobal:
 			logger.Info("Unlocked global bucket")
 		}
 	}
+
 	_, err := q.globalBucket.Add(1)
 	if err != nil {
 		reset := q.globalBucket.Reset()
@@ -254,6 +280,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 	// Fail fast path for webhook 404s
 	var ret404 = false
 	for item := range ch.ch {
+		ctx := context.WithValue(item.Req.Context(), "identifier", q.identifier)
 		if ret404 {
 			return404webhook(item)
 			continue
@@ -266,7 +293,6 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			continue
 		}
 
-		ctx := context.WithValue(item.Req.Context(), "identifier", q.identifier)
 		resp, err := q.processor(ctx, item)
 		if err != nil {
 			item.errChan <- err
@@ -321,7 +347,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 
 		if resp.StatusCode == 401 {
 			// Permanently lock this queue
-			atomic.StoreInt64(q.globalLockedUntil, 999)
+			atomic.StoreInt64(q.isTokenInvalid, 999)
 		}
 		if remaining == 0 || resp.StatusCode == 429 {
 			time.Sleep(time.Until(time.Now().Add(resetAfter)))

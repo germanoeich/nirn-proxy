@@ -1,81 +1,23 @@
 package main
 
 import (
+	"context"
 	"github.com/germanoeich/nirn-proxy/lib"
+	"github.com/hashicorp/memberlist"
 	_ "github.com/joho/godotenv/autoload"
 	"github.com/sirupsen/logrus"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
-	"sync"
+	"syscall"
 	"time"
 )
 
 var logger = logrus.New()
 // token : queue map
-var queues = make(map[string]*lib.RequestQueue)
-// Store invalid tokens to prevent a storm when a token gets reset
-var invalidTokens = make(map[string]bool)
-var queueMu = sync.RWMutex{}
 var bufferSize = 50
-
-type GenericHandler struct{}
-func (_ *GenericHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
-	lib.ConnectionsOpen.Inc()
-	defer lib.ConnectionsOpen.Dec()
-
-	token := req.Header.Get("Authorization")
-	queueMu.RLock()
-	// No token will work and fall under "" on the map
-	_, isInvalid := invalidTokens[token]
-	if isInvalid {
-		resp.WriteHeader(401)
-		_, err := resp.Write([]byte("Known bad token - nirn-proxy"))
-		if err != nil {
-			logger.Error(err)
-		}
-		queueMu.RUnlock()
-		return
-	}
-	q, ok := queues[token]
-	queueMu.RUnlock()
-	if !ok {
-		queueMu.Lock()
-		// Check if it wasn't created while we didn't hold the lock
-		q, ok = queues[token]
-		if !ok {
-			limit, err := lib.GetBotGlobalLimit(token)
-			if err != nil {
-				if strings.HasPrefix(err.Error(), "invalid token") {
-					invalidTokens[token] = true
-				}
-				logger.Error(err)
-				resp.WriteHeader(500)
-				_, err := resp.Write([]byte("Unable to fetch gateway info - nirn-proxy"))
-				if err != nil {
-					logger.Error(err)
-				}
-				queueMu.Unlock()
-				return
-			}
-
-			user, _ := lib.GetBotUser(token)
-
-			q = lib.NewRequestQueue(lib.ProcessRequest, limit, bufferSize, user)
-			clientId := lib.GetBotId(token)
-			logger.WithFields(logrus.Fields{ "globalLimit": limit, "clientId": clientId, "bufferSize": bufferSize }).Info("Created new queue")
-			queues[token] = q
-		}
-		queueMu.Unlock()
-	}
-
-	_, _, err := q.Queue(req, &resp)
-	if err != nil {
-		logger.Error(err)
-		lib.ErrorCounter.Inc()
-		return
-	}
-}
 
 func setupLogger() {
 	logLevel := lib.EnvGet("LOG_LEVEL", "info")
@@ -89,6 +31,39 @@ func setupLogger() {
 	lib.SetLogger(logger)
 }
 
+func initCluster(proxyPort string, manager *lib.QueueManager) *memberlist.Memberlist {
+	port := lib.EnvGetInt("CLUSTER_PORT", 7946)
+
+	memberEnv := os.Getenv("CLUSTER_MEMBERS")
+	dns := os.Getenv("CLUSTER_DNS")
+
+	if memberEnv == "" && dns == "" {
+		logger.Info("Running in stand-alone mode")
+		return nil
+	}
+
+	logger.Info("Attempting to create/join cluster")
+	var members []string
+	if memberEnv != "" {
+		members = strings.Split(memberEnv, ",")
+	} else {
+		ips, err := net.LookupIP(dns)
+		if err != nil {
+			logger.Panic(err)
+		}
+
+		if len(ips) == 0 {
+			logger.Panic("no ips returned by dns")
+		}
+
+		for _, ip := range ips {
+			members = append(members, ip.String())
+		}
+	}
+
+	return lib.InitMemberList(members, port, proxyPort, manager)
+}
+
 func main()  {
 	outboundIp := os.Getenv("OUTBOUND_IP")
 
@@ -100,11 +75,18 @@ func main()  {
 	bindIp := lib.EnvGet("BIND_IP", "0.0.0.0")
 
 	setupLogger()
-	logger.Info("Starting proxy on " + bindIp + ":" + port)
+
+	bufferSize = lib.EnvGetInt("BUFFER_SIZE", 50)
+
+	manager := lib.NewQueueManager(bufferSize)
+
+	initCluster(port, manager)
+
+	mux := manager.CreateMux()
 
 	s := &http.Server{
 		Addr:           bindIp + ":" + port,
-		Handler:        &GenericHandler{},
+		Handler:        mux,
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   1 * time.Hour,
 		MaxHeaderBytes: 1 << 20,
@@ -119,10 +101,31 @@ func main()  {
 		go lib.StartMetrics(bindIp + ":" + port)
 	}
 
-	bufferSize = lib.EnvGetInt("BUFFER_SIZE", 50)
 
-	err := s.ListenAndServe()
-	if err != nil {
-		panic(err)
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.WithFields(logrus.Fields{"function": "http.ListenAndServe"}).Panic(err)
+		}
+	}()
+
+	logger.Info("Starting proxy on " + bindIp + ":" + port)
+	<-done
+	logger.Info("Server received shutdown signal")
+
+	logger.Info("Broadcasting leave message to cluster, if in cluster mode")
+	manager.Shutdown()
+
+	logger.Info("Gracefully shutting down HTTP server")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	if err := s.Shutdown(ctx); err != nil {
+		logger.WithFields(logrus.Fields{"function": "http.Shutdown"}).Error(err)
 	}
+
+	logger.Info("Bye bye")
 }

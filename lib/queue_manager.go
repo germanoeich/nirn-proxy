@@ -1,0 +1,265 @@
+package lib
+
+import (
+	"github.com/hashicorp/memberlist"
+	"github.com/sirupsen/logrus"
+	"net/http"
+	"sort"
+	"strconv"
+	"sync"
+	"time"
+)
+
+type QueueManager struct {
+	sync.RWMutex
+	queues map[string]*RequestQueue
+	bufferSize int
+	cluster *memberlist.Memberlist
+	clusterGlobalRateLimiter *ClusterGlobalRateLimiter
+	orderedClusterMembers []string
+	nameToAddressMap map[string]string
+	localNodeName string
+	localNodeIP              string
+	localNodeProxyListenAddr string
+}
+
+func NewQueueManager(bufferSize int) *QueueManager {
+	q := &QueueManager{
+		queues: make(map[string]*RequestQueue),
+		bufferSize: bufferSize,
+		cluster: nil,
+		clusterGlobalRateLimiter: NewClusterGlobalRateLimiter(),
+	}
+
+	return q
+}
+
+func (m *QueueManager) Shutdown() {
+	if m.cluster != nil {
+		m.cluster.Leave(30 * time.Second)
+	}
+}
+
+func (m *QueueManager) reindexMembers() {
+	if m.cluster == nil {
+		logger.Warn("reindexMembers called but cluster is nil")
+		return
+	}
+
+	m.Lock()
+	defer m.Unlock()
+
+	members := m.cluster.Members()
+	var orderedMembers []string
+	nameToAddressMap := make(map[string]string)
+	for _, m := range members {
+		orderedMembers = append(orderedMembers, m.Name)
+		nameToAddressMap[m.Name] = m.Addr.String() + ":" + string(m.Meta)
+	}
+	sort.Strings(orderedMembers)
+
+	m.orderedClusterMembers = orderedMembers
+	m.nameToAddressMap = nameToAddressMap
+}
+
+func (m *QueueManager) onNodeJoin(node *memberlist.Node) {
+	// Running in goroutine prevents a deadlock inside memberlist
+	go m.reindexMembers()
+}
+func (m *QueueManager) onNodeLeave(node *memberlist.Node) {
+	// Running in goroutine prevents a deadlock inside memberlist
+	go m.reindexMembers()
+}
+
+func (m *QueueManager) GetEventDelegate() *NirnEvents {
+	return &NirnEvents{
+		OnJoin:        m.onNodeJoin,
+		OnLeave:       m.onNodeLeave,
+	}
+}
+
+func (m *QueueManager) SetCluster(cluster *memberlist.Memberlist, proxyPort string) {
+	m.cluster = cluster
+	m.localNodeName = cluster.LocalNode().Name
+	m.localNodeIP = cluster.LocalNode().Addr.String()
+	m.localNodeProxyListenAddr = m.localNodeIP + ":" + proxyPort
+	m.reindexMembers()
+}
+
+func (m *QueueManager) calculateRoute(pathHash uint64) string {
+	if m.cluster == nil {
+		// Route to self, proxy in stand-alone mode
+		return ""
+	}
+
+	m.RLock()
+	defer m.RUnlock()
+
+	members := m.orderedClusterMembers
+	count := uint64(len(members))
+
+	chosenIndex := pathHash % count
+	addr := m.nameToAddressMap[members[chosenIndex]]
+	if addr == m.localNodeProxyListenAddr {
+		return ""
+	}
+	return addr
+}
+
+func (m *QueueManager) routeRequest(addr string, req *http.Request) (*http.Response, error) {
+	nodeReq, err := http.NewRequestWithContext(req.Context(), req.Method, "http://" + addr + req.URL.Path + "?" + req.URL.RawQuery, req.Body)
+	nodeReq.Header = req.Header.Clone()
+	nodeReq.Header.Set("nirn-routed-to", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	logger.WithFields(logrus.Fields{
+		"to": addr,
+		"path": req.URL.Path,
+		"method": req.Method,
+	}).Trace("Routing request to node in cluster")
+	resp, err := client.Do(nodeReq)
+	logger.WithFields(logrus.Fields{
+		"to":     addr,
+		"path":   req.URL.Path,
+		"method": req.Method,
+	}).Trace("Received response from node")
+	if err == nil {
+		RequestsRoutedSent.Inc()
+	} else {
+		RequestsRoutedError.Inc()
+	}
+
+	return resp, err
+}
+
+func (m *QueueManager) Generate429(resp *http.ResponseWriter) {
+	writer := *resp
+	writer.Header().Set("generated-by-proxy", "true")
+	writer.Header().Set("x-ratelimit-scope", "user")
+	writer.Header().Set("x-ratelimit-limit", "1")
+	writer.Header().Set("x-ratelimit-remaining", "0")
+	writer.Header().Set("x-ratelimit-reset", string(time.Now().Add(1 * time.Second).Unix()))
+	writer.Header().Set("x-ratelimit-after", "1")
+	writer.Header().Set("retry-after", "1")
+	writer.Header().Set("content-type", "application/json")
+	writer.WriteHeader(429)
+	writer.Write([]byte("{\n\t\"global\": false,\n\t\"message\": \"You are being rate limited.\",\n\t\"retry_after\": 1\n}"))
+}
+
+func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http.Request) {
+	ConnectionsOpen.Inc()
+	defer ConnectionsOpen.Dec()
+
+	token := req.Header.Get("Authorization")
+
+	m.RLock()
+	q, ok := m.queues[token]
+	m.RUnlock()
+
+	if !ok {
+		m.Lock()
+		// Check if it wasn't created while we didn't hold the lock
+		q, ok = m.queues[token]
+		if !ok {
+			var err error
+			q, err = NewRequestQueue(ProcessRequest, token, m.bufferSize)
+
+			if err != nil {
+				resp.WriteHeader(500)
+				resp.Write([]byte(err.Error()))
+				logger.Error(err)
+				m.Unlock()
+				return
+			}
+
+			m.queues[token] = q
+		}
+		m.Unlock()
+	}
+
+	path := GetOptimisticBucketPath(req.URL.Path, req.Method)
+	pathHash := HashCRC64(path)
+	var botHash uint64 = 0
+	if q.user != nil {
+		botHash = HashCRC64(q.user.Id)
+	}
+
+	routeTo := m.calculateRoute(pathHash)
+	globalRouteTo := m.calculateRoute(botHash)
+
+	routeToHeader := req.Header.Get("nirn-routed-to")
+	req.Header.Del("nirn-routed-to")
+
+	if routeToHeader != "" {
+		RequestsRoutedRecv.Inc()
+	}
+
+	var err error
+	if routeTo == "" || routeToHeader != "" {
+		if q.identifier != "NoAuth" && m.cluster != nil {
+			botLimit := q.botLimit
+
+			if globalRouteTo == "" {
+				m.clusterGlobalRateLimiter.Take(botHash, botLimit)
+			} else {
+				err = m.clusterGlobalRateLimiter.FireGlobalRequest(req.Context(), globalRouteTo, botHash, botLimit)
+				if err != nil {
+					logger.WithFields(logrus.Fields{"function": "FireGlobalRequest"}).Error(err)
+					ErrorCounter.Inc()
+					m.Generate429(&resp)
+					return
+				}
+			}
+		}
+		_, _, err = q.Queue(req, &resp, path, pathHash)
+		if err != nil {
+			logger.WithFields(logrus.Fields{"function": "Queue"}).Error(err)
+		}
+	} else {
+		var res *http.Response
+		res, err = m.routeRequest(routeTo, req)
+		if err == nil {
+			err = CopyResponseToResponseWriter(res, &resp)
+			if err != nil {
+				logger.WithFields(logrus.Fields{"function": "CopyResponseToResponseWriter"}).Error(err)
+			}
+		} else {
+			logger.WithFields(logrus.Fields{"function": "routeRequest"}).Error(err)
+			m.Generate429(&resp)
+		}
+	}
+
+	if err != nil {
+		ErrorCounter.Inc()
+		return
+	}
+}
+
+func (m *QueueManager) HandleGlobal(w http.ResponseWriter, r *http.Request) {
+	botHashStr := r.Header.Get("bot-hash")
+	botLimitStr := r.Header.Get("bot-limit")
+
+	botHash, err := strconv.ParseUint(botHashStr, 10, 64)
+	if err != nil {
+		w.WriteHeader(400)
+		return
+	}
+
+	botLimit, err := strconv.ParseUint(botLimitStr, 10, 64)
+	if err != nil {
+		w.WriteHeader(400)
+		return
+	}
+
+	m.clusterGlobalRateLimiter.Take(botHash, uint(botLimit))
+	logger.Trace("Returned OK for global request")
+}
+
+func (m *QueueManager) CreateMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", m.DiscordRequestHandler)
+	mux.HandleFunc("/nirn/global", m.HandleGlobal)
+	return mux
+}
