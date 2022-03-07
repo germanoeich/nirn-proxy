@@ -11,7 +11,9 @@ func copyHeader(dst, src http.Header) {
 	dst["Content-Type"] = nil
 	for k, vv := range src {
 		for _, v := range vv {
-			dst[strings.ToLower(k)] = []string{v}
+			if k != "Content-Length" {
+				dst[strings.ToLower(k)] = []string{v}
+			}
 		}
 	}
 }
