@@ -47,3 +47,9 @@ DNS address that will resolve to multiple members of the cluster. Does not need 
 If using Kubernetes, create a headless service and use it here for easy clustering.
 
 Example: `nirn-headless.default.svc.cluster.local` or `nirn.mydomain.com`
+
+## Unstable env vars
+Collection of env vars that may be removed at any time, mainly used for Discord introducing new behaviour on their edge api versions
+
+##### DISABLE_401_LOCK
+The proxy locks its queue permanently in case a 401 is encountered during normal operation. This env disables this mechanism but not the logging for it.

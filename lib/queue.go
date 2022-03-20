@@ -347,7 +347,17 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 
 		if resp.StatusCode == 401 {
 			// Permanently lock this queue
-			atomic.StoreInt64(q.isTokenInvalid, 999)
+			logger.WithFields(logrus.Fields{
+				"bucket": path,
+				"route": item.Req.URL.String(),
+				"method": item.Req.Method,
+				"identifier": q.identifier,
+				"status": resp.StatusCode,
+			}).Error("Received 401 during normal operation, assuming token is invalidated, locking bucket permanently")
+
+			if EnvGet("DISABLE_401_LOCK", "false") != "true" {
+				atomic.StoreInt64(q.isTokenInvalid, 999)
+			}
 		}
 		if remaining == 0 || resp.StatusCode == 429 {
 			time.Sleep(time.Until(time.Now().Add(resetAfter)))
