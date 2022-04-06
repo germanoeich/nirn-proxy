@@ -345,7 +345,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			ret404 = true
 		}
 
-		if resp.StatusCode == 401 {
+		if resp.StatusCode == 401 && !isInteraction(item.Req.URL.String()) && q.identifier != "NoAuth" {
 			// Permanently lock this queue
 			logger.WithFields(logrus.Fields{
 				"bucket": path,
