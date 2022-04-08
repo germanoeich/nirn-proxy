@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -13,6 +14,8 @@ import (
 type QueueManager struct {
 	sync.RWMutex
 	queues map[string]*RequestQueue
+	bearerQueues map[string]*RequestQueue
+	bearerMu sync.RWMutex
 	bufferSize int
 	cluster *memberlist.Memberlist
 	clusterGlobalRateLimiter *ClusterGlobalRateLimiter
@@ -26,6 +29,7 @@ type QueueManager struct {
 func NewQueueManager(bufferSize int) *QueueManager {
 	q := &QueueManager{
 		queues: make(map[string]*RequestQueue),
+		bearerQueues: make(map[string]*RequestQueue),
 		bufferSize: bufferSize,
 		cluster: nil,
 		clusterGlobalRateLimiter: NewClusterGlobalRateLimiter(),
@@ -48,6 +52,8 @@ func (m *QueueManager) reindexMembers() {
 
 	m.Lock()
 	defer m.Unlock()
+	m.bearerMu.Lock()
+	defer m.bearerMu.Unlock()
 
 	members := m.cluster.Members()
 	var orderedMembers []string
@@ -94,6 +100,8 @@ func (m *QueueManager) calculateRoute(pathHash uint64) string {
 
 	m.RLock()
 	defer m.RUnlock()
+	m.bearerMu.RLock()
+	defer m.bearerMu.RUnlock()
 
 	members := m.orderedClusterMembers
 	count := uint64(len(members))
@@ -148,12 +156,7 @@ func (m *QueueManager) Generate429(resp *http.ResponseWriter) {
 	writer.Write([]byte("{\n\t\"global\": false,\n\t\"message\": \"You are being rate limited.\",\n\t\"retry_after\": 1\n}"))
 }
 
-func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http.Request) {
-	ConnectionsOpen.Inc()
-	defer ConnectionsOpen.Dec()
-
-	token := req.Header.Get("Authorization")
-
+func (m *QueueManager) getOrCreateBotQueue(token string) (*RequestQueue, error) {
 	m.RLock()
 	q, ok := m.queues[token]
 	m.RUnlock()
@@ -167,11 +170,7 @@ func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http
 			q, err = NewRequestQueue(ProcessRequest, token, m.bufferSize)
 
 			if err != nil {
-				resp.WriteHeader(500)
-				resp.Write([]byte(err.Error()))
-				logger.Error(err)
-				m.Unlock()
-				return
+				return nil, err
 			}
 
 			m.queues[token] = q
@@ -179,11 +178,72 @@ func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http
 		m.Unlock()
 	}
 
+	return q, nil
+}
+
+func (m *QueueManager) getOrCreateBearerQueue(token string) (*RequestQueue, error) {
+	m.bearerMu.RLock()
+	q, ok := m.bearerQueues[token]
+	m.bearerMu.RUnlock()
+
+	if !ok {
+		m.bearerMu.Lock()
+		// Check if it wasn't created while we didn't hold the lock
+		q, ok = m.bearerQueues[token]
+		if !ok {
+			var err error
+			q, err = NewRequestQueue(ProcessRequest, token, 5)
+
+			if err != nil {
+				return nil, err
+			}
+
+			m.bearerQueues[token] = q
+		}
+		m.bearerMu.Unlock()
+	}
+
+	return q, nil
+}
+
+func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http.Request) {
+	ConnectionsOpen.Inc()
+	defer ConnectionsOpen.Dec()
+
+	token := req.Header.Get("Authorization")
+
+	var q *RequestQueue
+	var err error
+	if strings.HasPrefix(token, "Bearer") {
+		q, err = m.getOrCreateBearerQueue(token)
+	} else {
+		q, err = m.getOrCreateBotQueue(token)
+	}
+
+
+	if err != nil {
+		resp.WriteHeader(500)
+		resp.Write([]byte(err.Error()))
+		logger.Error(err)
+	}
+
+	m.fulfillRequest(&resp, req, q, token)
+}
+
+func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Request, q *RequestQueue, token string) {
 	path := GetOptimisticBucketPath(req.URL.Path, req.Method)
-	pathHash := HashCRC64(path)
 	var botHash uint64 = 0
 	if q.user != nil {
 		botHash = HashCRC64(q.user.Id)
+	}
+
+	var pathHash uint64
+	if !q.isBearer {
+		pathHash = HashCRC64(path)
+	} else {
+		// Bearer queues are numerous and almost exclusively @me endpoints, which dont spread out evenly
+		// By hashing them by the token, we get better node usage in the cluster
+		pathHash = HashCRC64(token)
 	}
 
 	routeTo := m.calculateRoute(pathHash)
@@ -208,12 +268,12 @@ func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http
 				if err != nil {
 					logger.WithFields(logrus.Fields{"function": "FireGlobalRequest"}).Error(err)
 					ErrorCounter.Inc()
-					m.Generate429(&resp)
+					m.Generate429(resp)
 					return
 				}
 			}
 		}
-		_, _, err = q.Queue(req, &resp, path, pathHash)
+		_, _, err = q.Queue(req, resp, path, pathHash)
 		if err != nil {
 			logger.WithFields(logrus.Fields{"function": "Queue"}).Error(err)
 		}
@@ -221,13 +281,13 @@ func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http
 		var res *http.Response
 		res, err = m.routeRequest(routeTo, req)
 		if err == nil {
-			err = CopyResponseToResponseWriter(res, &resp)
+			err = CopyResponseToResponseWriter(res, resp)
 			if err != nil {
 				logger.WithFields(logrus.Fields{"function": "CopyResponseToResponseWriter"}).Error(err)
 			}
 		} else {
 			logger.WithFields(logrus.Fields{"function": "routeRequest"}).Error(err)
-			m.Generate429(&resp)
+			m.Generate429(resp)
 		}
 	}
 
