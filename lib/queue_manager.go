@@ -12,6 +12,14 @@ import (
 	"time"
 )
 
+type QueueType int64
+
+const (
+	Bot QueueType = iota
+	NoAuth
+	Bearer
+)
+
 type QueueManager struct {
 	sync.RWMutex
 	queues map[string]*RequestQueue
@@ -106,6 +114,10 @@ func (m *QueueManager) SetCluster(cluster *memberlist.Memberlist, proxyPort stri
 func (m *QueueManager) calculateRoute(pathHash uint64) string {
 	if m.cluster == nil {
 		// Route to self, proxy in stand-alone mode
+		return ""
+	}
+
+	if pathHash == 0 {
 		return ""
 	}
 
@@ -222,43 +234,27 @@ func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http
 	defer ConnectionsOpen.Dec()
 
 	token := req.Header.Get("Authorization")
-
-	var q *RequestQueue
-	var err error
-	if strings.HasPrefix(token, "Bearer") {
-		q, err = m.getOrCreateBearerQueue(token)
-	} else {
-		q, err = m.getOrCreateBotQueue(token)
-	}
+	routingHash, path, queueType := m.GetRequestRoutingInfo(req, token)
 
 
-	if err != nil {
-		resp.WriteHeader(500)
-		resp.Write([]byte(err.Error()))
-		logger.Error(err)
-	}
-
-	m.fulfillRequest(&resp, req, q, token)
+	m.fulfillRequest(&resp, req, queueType, path, routingHash, token);
 }
 
-func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Request, q *RequestQueue, token string) {
-	path := GetOptimisticBucketPath(req.URL.Path, req.Method)
-	var botHash uint64 = 0
-	if q.user != nil {
-		botHash = HashCRC64(q.user.Id)
-	}
-
-	var pathHash uint64
-	if !q.isBearer {
-		pathHash = HashCRC64(path)
+func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (routingHash uint64, path string, queueType QueueType) {
+	path = GetOptimisticBucketPath(req.URL.Path, req.Method)
+	queueType = NoAuth
+	if strings.HasPrefix(token, "Bearer") {
+		queueType = Bearer
+		routingHash = HashCRC64(token)
 	} else {
-		// Bearer queues are numerous and almost exclusively @me endpoints, which dont spread out evenly
-		// By hashing them by the token, we get better node usage in the cluster
-		pathHash = HashCRC64(token)
+		queueType = Bot
+		routingHash = HashCRC64(path)
 	}
+	return
+}
 
+func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Request, queueType QueueType, path string, pathHash uint64, token string) {
 	routeTo := m.calculateRoute(pathHash)
-	globalRouteTo := m.calculateRoute(botHash)
 
 	routeToHeader := req.Header.Get("nirn-routed-to")
 	req.Header.Del("nirn-routed-to")
@@ -269,10 +265,30 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 
 	var err error
 	if routeTo == "" || routeToHeader != "" {
-		if q.identifier != "NoAuth" && m.cluster != nil {
-			botLimit := q.botLimit
+		var q *RequestQueue
+		var err error
+		if queueType == Bearer {
+			q, err = m.getOrCreateBearerQueue(token)
+		} else {
+			q, err = m.getOrCreateBotQueue(token)
+		}
 
-			if globalRouteTo == "" {
+		if err != nil {
+			(*resp).WriteHeader(500)
+			(*resp).Write([]byte(err.Error()))
+			logger.Error(err)
+		}
+
+		if q.identifier != "NoAuth" && m.cluster != nil {
+			var botHash uint64 = 0
+			if q.user != nil {
+				botHash = HashCRC64(q.user.Id)
+			}
+
+			botLimit := q.botLimit
+			globalRouteTo := m.calculateRoute(botHash)
+
+			if globalRouteTo == "" || queueType == Bearer {
 				m.clusterGlobalRateLimiter.Take(botHash, botLimit)
 			} else {
 				err = m.clusterGlobalRateLimiter.FireGlobalRequest(req.Context(), globalRouteTo, botHash, botLimit)

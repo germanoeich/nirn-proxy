@@ -39,7 +39,7 @@ type RequestQueue struct {
 	identifier string
 	isTokenInvalid *int64
 	botLimit uint
-	isBearer bool
+	queueType QueueType
 }
 
 
@@ -67,7 +67,7 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 		return nil, err
 	}
 
-	isBearer := false
+	queueType := NoAuth
 	var user *BotUserResponse
 	if !strings.HasPrefix(token, "Bearer") {
 		user, err = GetBotUser(token)
@@ -75,15 +75,16 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 			return nil, err
 		}
 	} else {
-		isBearer = true
+		queueType = Bearer
 	}
 
 	identifier := "NoAuth"
 	if user != nil {
+		queueType = Bot
 		identifier = user.Username + "#" + user.Discrim
 	}
 
-	if isBearer {
+	if queueType == Bearer {
 		identifier = "Bearer"
 	}
 
@@ -97,10 +98,10 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 		identifier: 	   identifier,
 		isTokenInvalid:    new(int64),
 		botLimit: 		   limit,
-		isBearer: 		   isBearer,
+		queueType: 		   queueType,
 	}
 
-	if !isBearer {
+	if queueType != Bearer {
 		logger.WithFields(logrus.Fields{"globalLimit": limit, "identifier": identifier, "bufferSize": bufferSize}).Info("Created new queue")
 		// Only sweep bot queues, bearer queues get completely destroyed and hold way less endpoints
 		go ret.tickSweep()
@@ -346,7 +347,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			ret404 = true
 		}
 
-		if resp.StatusCode == 401 && !isInteraction(item.Req.URL.String()) && q.identifier != "NoAuth" {
+		if resp.StatusCode == 401 && !isInteraction(item.Req.URL.String()) && q.queueType != NoAuth {
 			// Permanently lock this queue
 			logger.WithFields(logrus.Fields{
 				"bucket": path,
