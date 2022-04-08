@@ -153,6 +153,9 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 
 	ch := q.getQueueChannel(path, pathHash)
 
+	q.RLock()
+	defer q.RUnlock()
+
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
 	ch.ch <- &QueueItem{req, res, doneChan, errChan }

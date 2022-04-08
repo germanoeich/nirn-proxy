@@ -1,6 +1,7 @@
 package lib
 
 import (
+	lru "github.com/hashicorp/golang-lru"
 	"github.com/hashicorp/memberlist"
 	"github.com/sirupsen/logrus"
 	"net/http"
@@ -14,7 +15,7 @@ import (
 type QueueManager struct {
 	sync.RWMutex
 	queues map[string]*RequestQueue
-	bearerQueues map[string]*RequestQueue
+	bearerQueues *lru.Cache
 	bearerMu sync.RWMutex
 	bufferSize int
 	cluster *memberlist.Memberlist
@@ -26,10 +27,20 @@ type QueueManager struct {
 	localNodeProxyListenAddr string
 }
 
-func NewQueueManager(bufferSize int) *QueueManager {
+func onEvictLruItem(key interface{}, value interface{}) {
+	go value.(*RequestQueue).destroy()
+}
+
+func NewQueueManager(bufferSize int, maxBearerLruSize int) *QueueManager {
+	bearerMap, err := lru.NewWithEvict(maxBearerLruSize, onEvictLruItem)
+
+	if err != nil {
+		panic(err)
+	}
+
 	q := &QueueManager{
 		queues: make(map[string]*RequestQueue),
-		bearerQueues: make(map[string]*RequestQueue),
+		bearerQueues: bearerMap,
 		bufferSize: bufferSize,
 		cluster: nil,
 		clusterGlobalRateLimiter: NewClusterGlobalRateLimiter(),
@@ -183,13 +194,13 @@ func (m *QueueManager) getOrCreateBotQueue(token string) (*RequestQueue, error) 
 
 func (m *QueueManager) getOrCreateBearerQueue(token string) (*RequestQueue, error) {
 	m.bearerMu.RLock()
-	q, ok := m.bearerQueues[token]
+	q, ok := m.bearerQueues.Get(token)
 	m.bearerMu.RUnlock()
 
 	if !ok {
 		m.bearerMu.Lock()
 		// Check if it wasn't created while we didn't hold the lock
-		q, ok = m.bearerQueues[token]
+		q, ok = m.bearerQueues.Get(token)
 		if !ok {
 			var err error
 			q, err = NewRequestQueue(ProcessRequest, token, 5)
@@ -198,12 +209,12 @@ func (m *QueueManager) getOrCreateBearerQueue(token string) (*RequestQueue, erro
 				return nil, err
 			}
 
-			m.bearerQueues[token] = q
+			m.bearerQueues.Add(token, q)
 		}
 		m.bearerMu.Unlock()
 	}
 
-	return q, nil
+	return q.(*RequestQueue), nil
 }
 
 func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http.Request) {
