@@ -186,6 +186,7 @@ func (m *QueueManager) getOrCreateBotQueue(token string) (*RequestQueue, error) 
 
 	if !ok {
 		m.Lock()
+		defer m.Unlock()
 		// Check if it wasn't created while we didn't hold the lock
 		q, ok = m.queues[token]
 		if !ok {
@@ -198,7 +199,6 @@ func (m *QueueManager) getOrCreateBotQueue(token string) (*RequestQueue, error) 
 
 			m.queues[token] = q
 		}
-		m.Unlock()
 	}
 
 	return q, nil
@@ -211,6 +211,7 @@ func (m *QueueManager) getOrCreateBearerQueue(token string) (*RequestQueue, erro
 
 	if !ok {
 		m.bearerMu.Lock()
+		defer m.bearerMu.Unlock()
 		// Check if it wasn't created while we didn't hold the lock
 		q, ok = m.bearerQueues.Get(token)
 		if !ok {
@@ -223,7 +224,6 @@ func (m *QueueManager) getOrCreateBearerQueue(token string) (*RequestQueue, erro
 
 			m.bearerQueues.Add(token, q)
 		}
-		m.bearerMu.Unlock()
 	}
 
 	return q.(*RequestQueue), nil
@@ -236,8 +236,7 @@ func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http
 	token := req.Header.Get("Authorization")
 	routingHash, path, queueType := m.GetRequestRoutingInfo(req, token)
 
-
-	m.fulfillRequest(&resp, req, queueType, path, routingHash, token);
+	m.fulfillRequest(&resp, req, queueType, path, routingHash, token)
 }
 
 func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (routingHash uint64, path string, queueType QueueType) {
