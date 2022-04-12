@@ -152,14 +152,13 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 		"method": req.Method,
 	}).Trace("Inbound request")
 
+	q.Lock()
 	ch := q.getQueueChannel(path, pathHash)
-
-	q.RLock()
-	defer q.RUnlock()
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
 	ch.ch <- &QueueItem{req, res, doneChan, errChan }
+	q.Unlock()
 	select {
 	case resp := <-doneChan:
 		return path, resp, nil
@@ -169,8 +168,6 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 }
 
 func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChannel {
-	q.Lock()
-	defer q.Unlock()
 	t := time.Now()
 	ch, ok := q.queues[pathHash]
 	if !ok {
