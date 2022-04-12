@@ -39,6 +39,7 @@ type RequestQueue struct {
 	identifier string
 	isTokenInvalid *int64
 	botLimit uint
+	queueType QueueType
 }
 
 
@@ -66,14 +67,25 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 		return nil, err
 	}
 
-	user, err := GetBotUser(token)
-	if err != nil && token != "" {
-		return nil, err
+	queueType := NoAuth
+	var user *BotUserResponse
+	if !strings.HasPrefix(token, "Bearer") {
+		user, err = GetBotUser(token)
+		if err != nil && token != "" {
+			return nil, err
+		}
+	} else {
+		queueType = Bearer
 	}
 
 	identifier := "NoAuth"
 	if user != nil {
+		queueType = Bot
 		identifier = user.Username + "#" + user.Discrim
+	}
+
+	if queueType == Bearer {
+		identifier = "Bearer"
 	}
 
 	ret := &RequestQueue{
@@ -85,13 +97,29 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 		user: 			   user,
 		identifier: 	   identifier,
 		isTokenInvalid:    new(int64),
-		botLimit: limit,
+		botLimit: 		   limit,
+		queueType: 		   queueType,
 	}
 
-	logger.WithFields(logrus.Fields{ "globalLimit": limit, "identifier": identifier, "bufferSize": bufferSize }).Info("Created new queue")
+	if queueType != Bearer {
+		logger.WithFields(logrus.Fields{"globalLimit": limit, "identifier": identifier, "bufferSize": bufferSize}).Info("Created new queue")
+		// Only sweep bot queues, bearer queues get completely destroyed and hold way less endpoints
+		go ret.tickSweep()
+	} else {
+		logger.WithFields(logrus.Fields{"globalLimit": limit, "identifier": identifier, "bufferSize": bufferSize}).Debug("Created new bearer queue")
+	}
 
-	go ret.tickSweep()
 	return ret, nil
+}
+
+func (q *RequestQueue) destroy() {
+	q.Lock()
+	defer q.Unlock()
+	logger.Debug("Destroying queue")
+	for _, val := range q.queues {
+		close(val.ch)
+	}
+	q.queues = nil
 }
 
 func (q *RequestQueue) sweep() {
@@ -124,11 +152,13 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 		"method": req.Method,
 	}).Trace("Inbound request")
 
+	q.Lock()
 	ch := q.getQueueChannel(path, pathHash)
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
 	ch.ch <- &QueueItem{req, res, doneChan, errChan }
+	q.Unlock()
 	select {
 	case resp := <-doneChan:
 		return path, resp, nil
@@ -138,8 +168,6 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 }
 
 func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChannel {
-	q.Lock()
-	defer q.Unlock()
 	t := time.Now()
 	ch, ok := q.queues[pathHash]
 	if !ok {
@@ -206,34 +234,6 @@ func parseHeaders(headers *http.Header) (int64, int64, time.Duration, bool, erro
 	return limitParsed, remainingParsed, reset, isGlobal, nil
 }
 
-func (q *RequestQueue) takeGlobal(path string) {
-takeGlobal:
-	waitTime := atomic.LoadInt64(q.globalLockedUntil)
-
-	if waitTime > 0 {
-		logger.WithFields(logrus.Fields{
-			"bucket": path,
-			"waitTime": waitTime,
-		}).Trace("Waiting for existing global to clear")
-		time.Sleep(time.Until(time.Unix(0, waitTime)))
-		sw := atomic.CompareAndSwapInt64(q.globalLockedUntil, waitTime, 0)
-		if sw {
-			logger.Info("Unlocked global bucket")
-		}
-	}
-
-	_, err := q.globalBucket.Add(1)
-	if err != nil {
-		reset := q.globalBucket.Reset()
-		logger.WithFields(logrus.Fields{
-			"bucket": path,
-			"waitTime": time.Until(reset),
-		}).Trace("Failed to grab global token, sleeping for a bit")
-		time.Sleep(time.Until(reset))
-		goto takeGlobal
-	}
-}
-
 func return404webhook(item *QueueItem) {
 	res := *item.Res
 	res.WriteHeader(404)
@@ -286,7 +286,6 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			continue
 		}
 
-		q.takeGlobal(path)
 
 		if atomic.LoadInt64(q.isTokenInvalid) > 0 {
 			return401(item)
@@ -345,7 +344,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			ret404 = true
 		}
 
-		if resp.StatusCode == 401 && !isInteraction(item.Req.URL.String()) && q.identifier != "NoAuth" {
+		if resp.StatusCode == 401 && !isInteraction(item.Req.URL.String()) && q.queueType != NoAuth {
 			// Permanently lock this queue
 			logger.WithFields(logrus.Fields{
 				"bucket": path,

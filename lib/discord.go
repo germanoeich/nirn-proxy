@@ -10,6 +10,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -77,6 +78,10 @@ func ConfigureDiscordHTTPClient(ip string, timeout time.Duration) {
 func GetBotGlobalLimit(token string) (uint, error) {
 	if token == "" {
 		return math.MaxUint32, nil
+	}
+
+	if strings.HasPrefix(token, "Bearer") {
+		return 50, nil
 	}
 
 	bot, err := doDiscordReq(context.Background(), "/api/v9/gateway/bot", "GET", nil, map[string][]string{"Authorization": {token}}, "")

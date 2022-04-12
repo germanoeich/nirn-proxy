@@ -77,8 +77,9 @@ func main()  {
 	setupLogger()
 
 	bufferSize = lib.EnvGetInt("BUFFER_SIZE", 50)
+	maxBearerLruSize := lib.EnvGetInt("MAX_BEARER_COUNT", 1024)
 
-	manager := lib.NewQueueManager(bufferSize)
+	manager := lib.NewQueueManager(bufferSize, maxBearerLruSize)
 
 	initCluster(port, manager)
 

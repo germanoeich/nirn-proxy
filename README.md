@@ -11,6 +11,7 @@ It is designed to be minimally invasive and exploits common library patterns to 
 - Works with any API version (Also supports using two or more versions for the same bot)
 - Small resource footprint
 - Works with webhooks
+- Works with Bearer tokens
 - Prometheus metrics exported out of the box
 - No hardcoded routes, therefore no need of updates for new routes introduced by Discord
 
@@ -56,8 +57,6 @@ The proxy may return a 408 Request Timeout if Discord takes more than $REQUEST_T
 
 The ratelimiting only works with `X-RateLimit-Precision` set to `seconds`. If you are using Discord API v8+, that is the only possible behaviour. For users on v6 or v7, please refer to your library docs for information on which precision it uses and how to change it to seconds.
 
-Bearer tokens should work, however this was not at all tested and is not the main use case for this project
-
 ### Why?
 
 As projects grow, it's desirable to break them into multiple pieces, each responsible for its own domain. Discord provides gateway sharding on their end but REST can get tricky once you start moving logic out of the shards themselves and lose the guild affinity that shards inherently have, thus a centralized place for handling ratelimits is a must to prevent cloudflare bans and prevent avoidable 429s. At the time this project was created, there was no alternative that fully satisfied our requirements like multi-bot support. We are also early adopters of Discord features, so we need a proxy that supports new routes without us having to manually update it. Thus, this project was born.
@@ -98,6 +97,10 @@ During recovery periods or when nodes join/leave the cluster, you might notice i
 Global ratelimits are handled by a single node on the cluster, however this affinity is soft. There is no concept of leader or elections and if this node leaves, the cluster will simply pick a new one. This is a bottleneck and might increase tail latency, but the other options were either too complex, required an external storage, or would require quorum for the proxy to function. Webhooks and other requests with no token bypass this mechanism completely.
 
 The best deployment strategy for the cluster is to kill nodes one at a time, preferably with the replacement node already up.
+
+### Bearer Tokens
+
+Bearer tokens are first class citizens. They are treated differently than bot tokens, while bot queues are long lived and never get evicted, Bearer queues are put into an LRU and are spread out by their token hash instead of by the path hash. This provides a more even spread of bearer queues across nodes in the cluster. In addition, Bearer globals are always handled locally. You can control how many bearer queues to keep at any time with the MAX_BEARER_COUNT env var.
 
 ### Profiling
 

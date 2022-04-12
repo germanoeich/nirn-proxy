@@ -48,6 +48,11 @@ If using Kubernetes, create a headless service and use it here for easy clusteri
 
 Example: `nirn-headless.default.svc.cluster.local` or `nirn.mydomain.com`
 
+##### MAX_BEARER_COUNT
+Bearer token queues max size. Internally, bearer queues are put in an LRU map, this env var represents the max amount of items for this map.
+Requests are never interrupted midway, even when an entry is evicted. A low LRU size may cause increased 429s if a bearer token has too many requests queued and fires another one after eviction.
+Default: 1024
+
 ## Unstable env vars
 Collection of env vars that may be removed at any time, mainly used for Discord introducing new behaviour on their edge api versions
 
