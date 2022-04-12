@@ -2,6 +2,7 @@ package lib
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"github.com/sirupsen/logrus"
@@ -61,6 +62,7 @@ func createTransport(ip string) http.RoundTripper {
 		ExpectContinueTimeout: 2 * time.Second,
 		DialContext:           dialContext,
 		ResponseHeaderTimeout: 0,
+		TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
 	}
 	return &transport
 }
