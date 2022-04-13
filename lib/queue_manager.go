@@ -277,7 +277,9 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 		if err != nil {
 			(*resp).WriteHeader(500)
 			(*resp).Write([]byte(err.Error()))
-			logger.Error(err)
+			ErrorCounter.Inc()
+			logger.WithFields(logrus.Fields{"function": "getOrCreateQueue", "queueType": queueType}).Error(err)
+			return
 		}
 
 		if q.identifier != "NoAuth" && m.cluster != nil {
