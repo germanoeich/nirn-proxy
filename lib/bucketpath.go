@@ -66,7 +66,11 @@ func GetOptimisticBucketPath(url string, method string) string {
 		l := len(cleanUrl)
 		i := strings.Index(cleanUrl, "/")
 		cleanUrl = cleanUrl[i+1:l]
+	} else {
+		// Handle unversioned endpoints
+		cleanUrl = strings.ReplaceAll(cleanUrl, "/api/", "")
 	}
+
 	parts := strings.Split(cleanUrl, "/")
 	numParts := len(parts)
 

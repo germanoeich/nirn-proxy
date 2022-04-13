@@ -1,6 +1,8 @@
 package lib
 
 import (
+	"context"
+	"errors"
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/hashicorp/memberlist"
 	"github.com/sirupsen/logrus"
@@ -171,7 +173,7 @@ func (m *QueueManager) Generate429(resp *http.ResponseWriter) {
 	writer.Header().Set("x-ratelimit-scope", "user")
 	writer.Header().Set("x-ratelimit-limit", "1")
 	writer.Header().Set("x-ratelimit-remaining", "0")
-	writer.Header().Set("x-ratelimit-reset", string(time.Now().Add(1 * time.Second).Unix()))
+	writer.Header().Set("x-ratelimit-reset", strconv.FormatInt(time.Now().Add(1*time.Second).Unix(), 10))
 	writer.Header().Set("x-ratelimit-after", "1")
 	writer.Header().Set("retry-after", "1")
 	writer.Header().Set("content-type", "application/json")
@@ -301,7 +303,12 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 		}
 		_, _, err = q.Queue(req, resp, path, pathHash)
 		if err != nil {
-			logger.WithFields(logrus.Fields{"function": "Queue"}).Error(err)
+			log := logger.WithFields(logrus.Fields{"function": "Queue"})
+			if errors.Is(err, context.DeadlineExceeded) {
+				log.Warn(err)
+			} else {
+				log.Error(err)
+			}
 		}
 	} else {
 		var res *http.Response

@@ -69,7 +69,9 @@ func main()  {
 
 	timeout := lib.EnvGetInt("REQUEST_TIMEOUT", 5000)
 
-	lib.ConfigureDiscordHTTPClient(outboundIp, time.Duration(timeout) * time.Millisecond)
+	disableHttp2 := lib.EnvGetBool("DISABLE_HTTP_2", true)
+
+	lib.ConfigureDiscordHTTPClient(outboundIp, time.Duration(timeout) * time.Millisecond, disableHttp2)
 
 	port := lib.EnvGet("PORT", "8080")
 	bindIp := lib.EnvGet("BIND_IP", "0.0.0.0")

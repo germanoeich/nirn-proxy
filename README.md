@@ -36,6 +36,8 @@ Configuration options are
 | CLUSTER_PORT    | number                                        | 7946                    |
 | CLUSTER_MEMBERS | string list (comma separated)                 | ""                      |
 | CLUSTER_DNS     | string                                        | ""                      |
+| MAX_BEARER_COUNT| number                                        | 1024                    |
+| DISABLE_HTTP_2  | bool                                          | true                    |
 
 Information on each config var can be found [here](https://github.com/germanoeich/nirn-proxy/blob/main/CONFIG.md)
 

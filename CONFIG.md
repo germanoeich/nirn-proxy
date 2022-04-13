@@ -53,6 +53,12 @@ Bearer token queues max size. Internally, bearer queues are put in an LRU map, t
 Requests are never interrupted midway, even when an entry is evicted. A low LRU size may cause increased 429s if a bearer token has too many requests queued and fires another one after eviction.
 Default: 1024
 
+##### DISABLE_HTTP_2
+Flag to disable HTTP/2 requests on the client that makes discord requests. Does not impact the http server.
+This flag defaults to true due to go http2 support having a few minor issues that can cause requests to fail.
+
+Default: true
+
 ## Unstable env vars
 Collection of env vars that may be removed at any time, mainly used for Discord introducing new behaviour on their edge api versions
 

@@ -13,6 +13,19 @@ func EnvGet(name string, defaultVal string) string {
 	return val
 }
 
+func EnvGetBool(name string, defaultVal bool) bool {
+	val := os.Getenv(name)
+	if val == "" {
+		return defaultVal
+	}
+
+	if val != "true" && val != "false" {
+		panic("Invalid env var, expected true or false, got " + val + " for " + name)
+	}
+	return val == "true"
+}
+
+
 func EnvMustGet(name string) string {
 	val := os.Getenv(name)
 	if val == "" {

@@ -30,6 +30,12 @@ func TestPaths(t *testing.T) {
 		{"/api/v9/guilds/203039963636301824/channels", "GET", "/guilds/!/channels"},
 		// Wierd routes
 		{"/api/v9/guilds/templates/203039963636301824", "GET", "/guilds/templates/!"},
+		// Unversioned routes
+		{"/api/webhooks/203039963636301824/VSOzAqY1OZFF5WJVtbIzFtmjGupk-84Hn0A_ZzToF_CHsPIeCk0Q9Uok_mjxR0dNtApI", "POST", "/webhooks/203039963636301824/!"},
+		{"/api/interactions/203039963636301824/aW50ZXJhY3Rpb246ODg3NTU5MDA01AY4NTUxNDU0OnZwS3QycDhvREk2aVF3U1BqN2prcXBkRmNqNlp4VEhGRjZvSVlXSGh4WG4yb3l6Z3B6NTBPNVc3OHphV05OULLMOHBMa2RTZmVKd3lzVDA2b2h3OTUxaFJ4QlN0dkxXallPcmhnSHNJb0tSV0M5ZzY1NkN4VGRvemFOSHY4b05c/callback", "GET", "/interactions/203039963636301824/!/callback"},
+		{"/api/channels/872712139712913438/messages/872712150509047809/reactions/PandaOhShit:863985751205085195", "GET", "/channels/872712139712913438/messages/!/reactions/!/!"},
+		{"/api/invites/dyno", "GET", "/invites/!"},
+
 	}
 	for _, tt := range tests {
 		testname := fmt.Sprintf("%s-%s", tt.method, tt.path)

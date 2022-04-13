@@ -29,59 +29,61 @@ type BotUserResponse struct {
 	Discrim string `json:"discriminator"`
 }
 
-func createTransport(ip string) http.RoundTripper {
+func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
+	var transport http.Transport
 	if ip == "" {
-		// http.DefaultTransport options, with http2 disabled
-		return &http.Transport{
+		// http.DefaultTransport options
+		transport = http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
-			ForceAttemptHTTP2:     false,
+			ForceAttemptHTTP2:     true,
 			MaxIdleConns:          100,
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
-			TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
+		}
+	} else {
+		addr, err := net.ResolveTCPAddr("tcp", ip+":0")
+
+		if err != nil {
+			panic(err)
+		}
+
+		dialer := &net.Dialer{
+			LocalAddr:     addr,
+			Timeout:       30 * time.Second,
+			KeepAlive:     30 * time.Second,
+		}
+
+		dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := dialer.Dial(network, addr)
+			return conn, err
+		}
+
+		transport = http.Transport{
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          1000,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 2 * time.Second,
+			DialContext:           dialContext,
+			ResponseHeaderTimeout: 0,
 		}
 	}
-	addr, err := net.ResolveTCPAddr("tcp", ip+":0")
 
-	if err != nil {
-		panic(err)
+	if disableHttp2 {
+		transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+		transport.ForceAttemptHTTP2 = false
 	}
 
-	dialer := &net.Dialer{
-		Deadline:      time.Time{},
-		LocalAddr:     addr,
-		FallbackDelay: 0,
-		Resolver:      nil,
-		Control:       nil,
-		Timeout:       30 * time.Second,
-		KeepAlive:     30 * time.Second,
-	}
-
-	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		conn, err := dialer.Dial(network, addr)
-		return conn, err
-	}
-
-	transport := http.Transport{
-		ForceAttemptHTTP2:     false,
-		MaxIdleConns:          1000,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 2 * time.Second,
-		DialContext:           dialContext,
-		ResponseHeaderTimeout: 0,
-		TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
-	}
 	return &transport
 }
 
-func ConfigureDiscordHTTPClient(ip string, timeout time.Duration) {
-	transport := createTransport(ip)
+func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, disableHttp2 bool) {
+	transport := createTransport(ip, disableHttp2)
 	client = &http.Client{
 		Transport: transport,
 		Timeout: 90 * time.Second,
