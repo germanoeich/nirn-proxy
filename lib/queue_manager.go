@@ -167,7 +167,7 @@ func (m *QueueManager) routeRequest(addr string, req *http.Request) (*http.Respo
 	return resp, err
 }
 
-func (m *QueueManager) Generate429(resp *http.ResponseWriter) {
+func Generate429(resp *http.ResponseWriter) {
 	writer := *resp
 	writer.Header().Set("generated-by-proxy", "true")
 	writer.Header().Set("x-ratelimit-scope", "user")
@@ -322,7 +322,7 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 			}
 		} else {
 			logger.WithFields(logrus.Fields{"function": "routeRequest"}).Error(err)
-			m.Generate429(resp)
+			Generate429(resp)
 		}
 	}
 

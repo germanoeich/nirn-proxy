@@ -119,7 +119,6 @@ func (q *RequestQueue) destroy() {
 	for _, val := range q.queues {
 		close(val.ch)
 	}
-	q.queues = nil
 }
 
 func (q *RequestQueue) sweep() {
@@ -145,41 +144,49 @@ func (q *RequestQueue) tickSweep() {
 	}
 }
 
-func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash uint64) (string, *http.Response, error) {
+func safeSend(ch chan *QueueItem, value *QueueItem) {
+	defer func() {
+		if recover() != nil {
+			value.errChan <- errors.New("failed to send due to closed channel, sending 429 for client to retry")
+			Generate429(value.Res)
+		}
+	}()
+
+	ch <- value
+}
+
+func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash uint64) error {
 	logger.WithFields(logrus.Fields{
 		"bucket": path,
 		"path": req.URL.Path,
 		"method": req.Method,
 	}).Trace("Inbound request")
 
-	q.Lock()
 	ch := q.getQueueChannel(path, pathHash)
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
-	ch.ch <- &QueueItem{req, res, doneChan, errChan }
-	q.Unlock()
+
+	safeSend(ch.ch, &QueueItem{req, res, doneChan, errChan })
+
 	select {
-	case resp := <-doneChan:
-		return path, resp, nil
+	case <-doneChan:
+		return nil
 	case err := <-errChan:
-		return path, nil, err
+		return err
 	}
 }
 
 func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChannel {
 	t := time.Now()
+	q.Lock()
+	defer q.Unlock()
 	ch, ok := q.queues[pathHash]
 	if !ok {
-		// Check again to see if the queue channel wasn't created
-		// While we didn't hold the exclusive lock
-		ch, ok = q.queues[pathHash]
-		if !ok {
-			ch = &QueueChannel{ make(chan *QueueItem, q.bufferSize), t }
-			q.queues[pathHash] = ch
-			// It's important that we only have 1 goroutine per channel
-			go q.subscribe(ch, path, pathHash)
-		}
+		ch = &QueueChannel{ make(chan *QueueItem, q.bufferSize), t }
+		q.queues[pathHash] = ch
+		// It's important that we only have 1 goroutine per channel
+		go q.subscribe(ch, path, pathHash)
 	} else {
 		ch.lastUsed = t
 	}
