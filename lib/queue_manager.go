@@ -298,12 +298,12 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 				if err != nil {
 					logger.WithFields(logrus.Fields{"function": "FireGlobalRequest"}).Error(err)
 					ErrorCounter.Inc()
-					m.Generate429(resp)
+					Generate429(resp)
 					return
 				}
 			}
 		}
-		_, _, err = q.Queue(req, resp, path, pathHash)
+		err = q.Queue(req, resp, path, pathHash)
 		if err != nil {
 			log := logger.WithFields(logrus.Fields{"function": "Queue"})
 			if errors.Is(err, context.DeadlineExceeded) {
