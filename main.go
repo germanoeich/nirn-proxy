@@ -83,8 +83,6 @@ func main()  {
 
 	manager := lib.NewQueueManager(bufferSize, maxBearerLruSize)
 
-	initCluster(port, manager)
-
 	mux := manager.CreateMux()
 
 	s := &http.Server{
@@ -114,7 +112,12 @@ func main()  {
 		}
 	}()
 
-	logger.Info("Starting proxy on " + bindIp + ":" + port)
+	logger.Info("Started proxy on " + bindIp + ":" + port)
+
+	// Wait for the http server to ready before joining the cluster
+	<- time.After(1 * time.Second)
+	initCluster(port, manager)
+
 	<-done
 	logger.Info("Server received shutdown signal")
 
