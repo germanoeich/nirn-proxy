@@ -39,6 +39,7 @@ Configuration options are
 | MAX_BEARER_COUNT| number                                        | 1024                    |
 | DISABLE_HTTP_2  | bool                                          | true                    |
 | BOT_RATELIMIT_OVERRIDES | string list (comma separated          | ""                      |
+
 Information on each config var can be found [here](https://github.com/germanoeich/nirn-proxy/blob/main/CONFIG.md)
 
 .env files are loaded if present
