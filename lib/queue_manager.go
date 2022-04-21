@@ -356,5 +356,8 @@ func (m *QueueManager) CreateMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", m.DiscordRequestHandler)
 	mux.HandleFunc("/nirn/global", m.HandleGlobal)
+	mux.HandleFunc("/nirn/healthz", func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(200)
+	})
 	return mux
 }
