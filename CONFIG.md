@@ -59,6 +59,12 @@ This flag defaults to true due to go http2 support having a few minor issues tha
 
 Default: true
 
+##### BOT_RATELIMIT_OVERRIDES
+Allows you to define custom global request limits for one or multiple bots. The default is 50 for bots with concurrency = 1 (/gateway/bot -> session_start_limit.max_concurrency field), 500 for concurrency 16 and based on a formula for higher concurrency values. This does not always represents the correct REST limit though, in those cases, you can manually set it using this flag.
+
+Format: Command separated list of **user id** and limit combo, separated by `:` and with no spaces at all. Don't use application ids.
+Example: `392827169497284619:100,227115752396685313:80`
+
 ## Unstable env vars
 Collection of env vars that may be removed at any time, mainly used for Discord introducing new behaviour on their edge api versions
 

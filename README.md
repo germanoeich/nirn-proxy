@@ -38,7 +38,7 @@ Configuration options are
 | CLUSTER_DNS     | string                                        | ""                      |
 | MAX_BEARER_COUNT| number                                        | 1024                    |
 | DISABLE_HTTP_2  | bool                                          | true                    |
-
+| BOT_RATELIMIT_OVERRIDES | string list (comma separated          | ""                      |
 Information on each config var can be found [here](https://github.com/germanoeich/nirn-proxy/blob/main/CONFIG.md)
 
 .env files are loaded if present
@@ -58,6 +58,30 @@ The proxy may return a 408 Request Timeout if Discord takes more than $REQUEST_T
 ### Limitations
 
 The ratelimiting only works with `X-RateLimit-Precision` set to `seconds`. If you are using Discord API v8+, that is the only possible behaviour. For users on v6 or v7, please refer to your library docs for information on which precision it uses and how to change it to seconds.
+
+### High availability
+
+The proxy can be run in a cluster by setting either `CLUSTER_MEMBERS` or `CLUSTER_DNS` env vars. When in cluster mode, all nodes are a suitable gateway for all requests and the proxy will route requests consistently using the bucket hash.
+
+It's recommended that all nodes are reachable through LAN. Please reach out if a WAN cluster is desired for your use case.
+
+If a node fails, there is a brief period where it will be unhealthy but requests will still be routed to it. When these requests fail, the proxy will mock a 429 to send back to the user. The 429 will signal the client to wait 1s and will have a custom header `generated-by-proxy`. This is done in order to allow seamless retries when a member fails. If you want to backoff, use the custom header to override your lib retry logic.
+
+The cluster uses [SWIM](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf), which is an [AP protocol](https://en.wikipedia.org/wiki/CAP_theorem) and is powered by hashicorps excellent [memberlist](https://github.com/hashicorp/memberlist) implementation.
+
+Being an AP system means that the cluster will tolerate a network partition and needs no quorum to function. In case a network partition occurs, you'll have two clusters running independently, which may or may not be desirable. Configure your network accordingly.
+
+In case you want to specifically target a node (i.e, for troubleshooting), set the `nirn-routed-to` header on the request. The value doesn't matter. This will prevent the node from routing the request to another node.
+
+During recovery periods or when nodes join/leave the cluster, you might notice increased 429s. This is expected since the hashing table is changing as members change. Once the cluster settles into a stable state, it'll go back to normal.
+
+Global ratelimits are handled by a single node on the cluster, however this affinity is soft. There is no concept of leader or elections and if this node leaves, the cluster will simply pick a new one. This is a bottleneck and might increase tail latency, but the other options were either too complex, required an external storage, or would require quorum for the proxy to function. Webhooks and other requests with no token bypass this mechanism completely.
+
+The best deployment strategy for the cluster is to kill nodes one at a time, preferably with the replacement node already up.
+
+### Bearer Tokens
+
+Bearer tokens are first class citizens. They are treated differently than bot tokens, while bot queues are long lived and never get evicted, Bearer queues are put into an LRU and are spread out by their token hash instead of by the path hash. This provides a more even spread of bearer queues across nodes in the cluster. In addition, Bearer globals are always handled locally. You can control how many bearer queues to keep at any time with the MAX_BEARER_COUNT env var.
 
 ### Why?
 
@@ -79,30 +103,6 @@ This will vary depending on your usage, how many unique routes you see, etc. For
 |nirn_proxy_requests_routed_error    | none                                   | Counter for requests routed that failed                    |
 
 Note: 429s can produce two status: 429 Too Many Requests or 429 Shared. The latter is only produced for requests that return with the x-ratelimit-scope header set to "shared", which means they don't count towards the cloudflare firewall limit and thus should not be used for alerts, etc.
-
-### High availability
-
-The proxy can be run in a cluster by setting either `CLUSTER_MEMBERS` or `CLUSTER_DNS` env vars. When in cluster mode, all nodes are a suitable gateway for all requests and the proxy will route requests consistently using the bucket hash. 
-
-It's recommended that all nodes are reachable through LAN. Please reach out if a WAN cluster is desired for your use case.
-
-If a node fails, there is a brief period where it will be unhealthy but requests will still be routed to it. When these requests fail, the proxy will mock a 429 to send back to the user. The 429 will signal the client to wait 1s and will have a custom header `generated-by-proxy`. This is done in order to allow seamless retries when a member fails. If you want to backoff, use the custom header to override your lib retry logic.
-
-The cluster uses [SWIM](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf), which is an [AP protocol](https://en.wikipedia.org/wiki/CAP_theorem) and is powered by hashicorps excellent [memberlist](https://github.com/hashicorp/memberlist) implementation.
-
-Being an AP system means that the cluster will tolerate a network partition and needs no quorum to function. In case a network partition occurs, you'll have two clusters running independently, which may or may not be desirable. Configure your network accordingly.
-
-In case you want to specifically target a node (i.e, for troubleshooting), set the `nirn-routed-to` header on the request. The value doesn't matter. This will prevent the node from routing the request to another node.
-
-During recovery periods or when nodes join/leave the cluster, you might notice increased 429s. This is expected since the hashing table is changing as members change. Once the cluster settles into a stable state, it'll go back to normal.
-
-Global ratelimits are handled by a single node on the cluster, however this affinity is soft. There is no concept of leader or elections and if this node leaves, the cluster will simply pick a new one. This is a bottleneck and might increase tail latency, but the other options were either too complex, required an external storage, or would require quorum for the proxy to function. Webhooks and other requests with no token bypass this mechanism completely.
-
-The best deployment strategy for the cluster is to kill nodes one at a time, preferably with the replacement node already up.
-
-### Bearer Tokens
-
-Bearer tokens are first class citizens. They are treated differently than bot tokens, while bot queues are long lived and never get evicted, Bearer queues are put into an LRU and are spread out by their token hash instead of by the path hash. This provides a more even spread of bearer queues across nodes in the cluster. In addition, Bearer globals are always handled locally. You can control how many bearer queues to keep at any time with the MAX_BEARER_COUNT env var.
 
 ### Profiling
 

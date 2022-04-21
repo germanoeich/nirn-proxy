@@ -11,6 +11,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -18,6 +19,8 @@ import (
 var client *http.Client
 
 var contextTimeout time.Duration
+
+var globalOverrideMap = make(map[string]uint)
 
 type BotGatewayResponse struct {
 	SessionStartLimit map[string]int `json:"session_start_limit"`
@@ -82,7 +85,31 @@ func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
 	return &transport
 }
 
-func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, disableHttp2 bool) {
+func parseGlobalOverrides(overrides string) {
+	// Format: "<bot_id>:<bot_global_limit>,<bot_id>:<bot_global_limit>
+
+	if overrides == "" {
+		return
+	}
+
+	overrideList := strings.Split(overrides, ",")
+	for _, override := range overrideList {
+		opts := strings.Split(override, ":")
+		if len(opts) != 2 {
+			panic("Invalid bot global ratelimit overrides")
+		}
+
+		limit, err := strconv.ParseInt(opts[1], 10, 32)
+
+		if err != nil {
+			panic("Failed to parse global ratelimit overrides")
+		}
+
+		globalOverrideMap[opts[0]] = uint(limit)
+	}
+}
+
+func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, disableHttp2 bool, globalOverrides string) {
 	transport := createTransport(ip, disableHttp2)
 	client = &http.Client{
 		Transport: transport,
@@ -90,11 +117,18 @@ func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, disableHttp2 b
 	}
 
 	contextTimeout = timeout
+
+	parseGlobalOverrides(globalOverrides)
 }
 
-func GetBotGlobalLimit(token string) (uint, error) {
+func GetBotGlobalLimit(token string, userId string) (uint, error) {
 	if token == "" {
 		return math.MaxUint32, nil
+	}
+
+	limitOverride, ok := globalOverrideMap[userId]
+	if ok {
+		return limitOverride, nil
 	}
 
 	if strings.HasPrefix(token, "Bearer") {

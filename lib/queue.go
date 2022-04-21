@@ -44,7 +44,19 @@ type RequestQueue struct {
 
 
 func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http.Response, error), token string, bufferSize int) (*RequestQueue, error) {
-	limit, err := GetBotGlobalLimit(token)
+	queueType := NoAuth
+	var user *BotUserResponse
+	var err error
+	if !strings.HasPrefix(token, "Bearer") {
+		user, err = GetBotUser(token)
+		if err != nil && token != "" {
+			return nil, err
+		}
+	} else {
+		queueType = Bearer
+	}
+
+	limit, err := GetBotGlobalLimit(token, user.Id)
 	memStorage := memory.New()
 	globalBucket, _ := memStorage.Create("global", limit, 1 * time.Second)
 	if err != nil {
@@ -65,17 +77,6 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 			}, nil
 		}
 		return nil, err
-	}
-
-	queueType := NoAuth
-	var user *BotUserResponse
-	if !strings.HasPrefix(token, "Bearer") {
-		user, err = GetBotUser(token)
-		if err != nil && token != "" {
-			return nil, err
-		}
-	} else {
-		queueType = Bearer
 	}
 
 	identifier := "NoAuth"
