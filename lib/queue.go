@@ -56,7 +56,7 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 		queueType = Bearer
 	}
 
-	limit, err := GetBotGlobalLimit(token, user.Id)
+	limit, err := GetBotGlobalLimit(token, user)
 	memStorage := memory.New()
 	globalBucket, _ := memStorage.Create("global", limit, 1 * time.Second)
 	if err != nil {

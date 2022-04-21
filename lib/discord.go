@@ -121,14 +121,16 @@ func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, disableHttp2 b
 	parseGlobalOverrides(globalOverrides)
 }
 
-func GetBotGlobalLimit(token string, userId string) (uint, error) {
+func GetBotGlobalLimit(token string, user *BotUserResponse) (uint, error) {
 	if token == "" {
 		return math.MaxUint32, nil
 	}
 
-	limitOverride, ok := globalOverrideMap[userId]
-	if ok {
-		return limitOverride, nil
+	if user != nil {
+		limitOverride, ok := globalOverrideMap[user.Id]
+		if ok {
+			return limitOverride, nil
+		}
 	}
 
 	if strings.HasPrefix(token, "Bearer") {
