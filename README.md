@@ -92,7 +92,7 @@ As projects grow, it's desirable to break them into multiple pieces, each respon
 
 This will vary depending on your usage, how many unique routes you see, etc. For reference, for Dynos use case, doing 150req/s, the usage is ~0.3 CPU and ~550MB of RAM. The proxy can comfortably run on a cheap VPS or an ARM based system.
 
-### Metrics
+### Metrics / Health
 
 | Key                                | Labels                                 | Description                                                |
 |------------------------------------|----------------------------------------|------------------------------------------------------------|
@@ -104,6 +104,8 @@ This will vary depending on your usage, how many unique routes you see, etc. For
 |nirn_proxy_requests_routed_error    | none                                   | Counter for requests routed that failed                    |
 
 Note: 429s can produce two status: 429 Too Many Requests or 429 Shared. The latter is only produced for requests that return with the x-ratelimit-scope header set to "shared", which means they don't count towards the cloudflare firewall limit and thus should not be used for alerts, etc.
+
+The proxy has an internal endpoint located at `/nirn/healthz` for liveliness and readiness probes.
 
 ### Profiling
 
