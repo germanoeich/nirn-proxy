@@ -3,6 +3,7 @@ package lib
 import (
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -52,6 +53,11 @@ func GetMetricsPath(route string) string {
 		} else {
 			path += "/" + part
 		}
+	}
+
+	if !utf8.ValidString(path) {
+		logger.Warn("Non utf-8 path detected, Prometheus only supports utf-8, invalid runes will be replaced with @ in metrics. Path: " + path)
+		path = strings.ToValidUTF8(path, "@")
 	}
 
 	return path

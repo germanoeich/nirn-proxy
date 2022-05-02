@@ -131,6 +131,10 @@ func (m *QueueManager) calculateRoute(pathHash uint64) string {
 	members := m.orderedClusterMembers
 	count := uint64(len(members))
 
+	if count == 0 {
+		return ""
+	}
+
 	chosenIndex := pathHash % count
 	addr := m.nameToAddressMap[members[chosenIndex]]
 	if addr == m.localNodeProxyListenAddr {
