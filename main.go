@@ -16,7 +16,6 @@ import (
 )
 
 var logger = logrus.New()
-// token : queue map
 var bufferSize = 50
 
 func setupLogger() {
