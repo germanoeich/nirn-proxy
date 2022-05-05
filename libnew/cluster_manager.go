@@ -49,7 +49,7 @@ func NewClusterManager() *ClusterManager {
 	}
 
 	if len(knownMembers) != 0 {
-		q.cluster = clustering.InitMemberList(knownMembers, cfg.ClusterPort, cfg.Port, q.getEventDelegate())
+		q.setCluster(clustering.InitMemberList(knownMembers, cfg.ClusterPort, cfg.Port, q.getEventDelegate()), cfg.Port)
 	}
 
 	return q
@@ -99,7 +99,7 @@ func (m *ClusterManager) getEventDelegate() *clustering.NirnEvents {
 	}
 }
 
-func (m *ClusterManager) SetCluster(cluster *memberlist.Memberlist, proxyPort string) {
+func (m *ClusterManager) setCluster(cluster *memberlist.Memberlist, proxyPort string) {
 	m.cluster = cluster
 	m.localNodeName = cluster.LocalNode().Name
 	m.localNodeIP = cluster.LocalNode().Addr.String()

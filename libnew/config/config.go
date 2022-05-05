@@ -32,7 +32,7 @@ func Get() NirnConfig {
 	return cfgSingleton
 }
 
-func Parse() {
+func Parse() NirnConfig {
 	logLevel := util.EnvGet("LOG_LEVEL", "info")
 	port := util.EnvGet("PORT", "8080")
 	metricsPort := util.EnvGet("METRICS_PORT", "9000")
@@ -66,6 +66,8 @@ func Parse() {
 		DisableHTTP2:         disableHttp2,
 		BotRatelimitOverride: parseGlobalOverrides(globalOverrides),
 	}
+
+	return cfgSingleton
 }
 
 func parseGlobalOverrides(overrides string) map[string]uint {

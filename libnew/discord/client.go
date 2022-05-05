@@ -4,6 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
+	"github.com/germanoeich/nirn-proxy/libnew/bucket"
+	"github.com/germanoeich/nirn-proxy/libnew/config"
+	"github.com/germanoeich/nirn-proxy/libnew/metrics"
 	"github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
@@ -18,27 +22,6 @@ import (
 type Client struct {
 	client *http.Client
 	contextTimeout time.Duration
-	// TODO: move this elsewhere
-	globalOverrideMap map[string]uint
-}
-
-func ConfigureDiscordHTTPClient(config ClientConfig) *http.Client {
-	transport := createTransport(config.ip, config.disableHttp2)
-	client := &http.Client{
-		Transport: transport,
-		Timeout: 90 * time.Second,
-	}
-
-	parseGlobalOverrides(config.globalOverrides)
-
-	return client
-}
-
-func NewDiscordClient(config ClientConfig) Client {
-	return Client{
-		client: ConfigureDiscordHTTPClient(config),
-		globalOverrideMap: make(map[string]uint),
-	}
 }
 
 func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
@@ -94,13 +77,29 @@ func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
 	return &transport
 }
 
-func GetBotGlobalLimit(token string, user *BotUserResponse) (uint, error) {
+func configureDiscordHTTPClient(config ClientConfig) *http.Client {
+	transport := createTransport(config.ip, config.disableHttp2)
+	client := &http.Client{
+		Transport: transport,
+		Timeout: 90 * time.Second,
+	}
+
+	return client
+}
+
+func NewDiscordClient(config ClientConfig) Client {
+	return Client{
+		client: configureDiscordHTTPClient(config),
+	}
+}
+
+func (c *Client) GetBotGlobalLimit(token string, user *BotUserResponse) (uint, error) {
 	if token == "" {
 		return math.MaxUint32, nil
 	}
 
 	if user != nil {
-		limitOverride, ok := globalOverrideMap[user.Id]
+		limitOverride, ok := config.Get().BotRatelimitOverride[user.Id]
 		if ok {
 			return limitOverride, nil
 		}
@@ -147,7 +146,7 @@ func GetBotGlobalLimit(token string, user *BotUserResponse) (uint, error) {
 	}
 }
 
-func GetBotUser(token string) (*BotUserResponse, error) {
+func (c *Client) GetBotUser(token string) (*BotUserResponse, error) {
 	if token == "" {
 		return nil, errors.New("no token provided")
 	}
@@ -177,7 +176,7 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 	return &s, nil
 }
 
-func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
+func (c *Client) Do(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
 	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com" + path + "?" + query, body)
 	discordReq.Header = header
 	if err != nil {
@@ -185,7 +184,7 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 	}
 
 	startTime := time.Now()
-	discordResp, err := client.Do(discordReq)
+	discordResp, err := c.client.Do(discordReq)
 
 	identifier := ctx.Value("identifier")
 	if identifier == nil {
@@ -194,7 +193,7 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 	}
 
 	if err == nil {
-		route := GetMetricsPath(path)
+		route := bucket.GetMetricsPath(path)
 		status := discordResp.Status
 		method := discordResp.Request.Method
 		elapsed := time.Since(startTime).Seconds()
@@ -204,7 +203,7 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 				status = "429 Shared"
 			}
 		}
-		RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": identifier.(string)}).Observe(elapsed)
+		metrics.RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": identifier.(string)}).Observe(elapsed)
 	}
 	return discordResp, err
 }
