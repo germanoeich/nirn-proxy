@@ -286,7 +286,7 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 			return
 		}
 
-		if q.identifier != "NoAuth" && m.cluster != nil {
+		if q.identifier != "NoAuth" {
 			var botHash uint64 = 0
 			if q.user != nil {
 				botHash = HashCRC64(q.user.Id)
