@@ -55,11 +55,13 @@ The proxy also guards against known scenarios that might cause a cloudflare ban,
 
 #### Ratelimit aborting
 
-The proxy allows requests to specify a `X-RateLimit-Abort-After` header (defaulted to the `RATELIMIT_ABORT_AFTER` variable). This sets the amount of seconds to wait in case of ratelimits before the proxy aborts the request and returns a 429 response.
+The proxy allows requests to specify an `X-RateLimit-Abort-After` header (defaulted to the `RATELIMIT_ABORT_AFTER` variable). This sets the amount of seconds to wait in case of ratelimits before the proxy aborts the request and returns a 429 response.
 
-The point of ratelimit aborting is being able to send a request and set a maximum amount of time the request can be ratelimited. Certain enpoints have very high ratelimits and this configuration allow you to send the request and tell the proxy to abort it in case it needs to wait for the ratelimits. Compared to timeouts, this is a much more reliable approach in the event of instabilities of the API.
+The point of ratelimit aborting is being able to send a request and set a maximum amount of time the request can be ratelimited. Certain enpoints have very high ratelimits and this configuration allows you to send the request and tell the proxy to abort it in case it needs to wait for ratelimits. Compared to timeouts, this is a much more reliable approach in the event of instabilities of the API.
 
-The special (and default) value `-1` indicates a request which should not abort. Set the value to `0` to abort if any ratelimiting will be necessary. If the value is higher than the allowed window of the ratelimit - for example an abort time of `8` for a ratelimit of `5 / 5s` - the value will be subtracted each time the proxy waits for the ratelimit. The proxy does not pre-emptively calculate how long the request will need to wait for ratelimits, therefore the request will not immediately abort, so in the above example the request will abort after 5 seconds (`5s * 2` > `8`s) when the proxy waits for the second window.
+The special (and default) value `-1` indicates a request which should not abort. Set the value to `0` to abort if any ratelimiting will be necessary. If the value is higher than the allowed window of the ratelimit - for example an abort time of `8` for a ratelimit of `5 / 5s` - the value will be subtracted each time the proxy waits for the ratelimit.
+
+The proxy does not pre-emptively calculate how long a request will need to wait for ratelimits, therefore requests may not always immediately abort. In the above example with 8 seconds of abort time, the request will be aborted after roughly 5 seconds when the proxy fills the second window of the ratelimit and the request would have to wait for 10 seconds in total had it not been aborted.
 
 To use this effectively, you'll need to make changes to your library so that it does not attempt to retry a request sent with the header. In Python for example, this could be implemented as a context manager which catches an exception raised by the API methods.
 

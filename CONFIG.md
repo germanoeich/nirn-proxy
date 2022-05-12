@@ -66,9 +66,9 @@ Format: Command separated list of **user id** and limit combo, separated by `:` 
 Example: `392827169497284619:100,227115752396685313:80`
 
 ##### RATELIMIT_ABORT_AFTER
-Amount of seconds a request should wait for ratelimits for aborting. `-1` means request will never abort, `0` means the request will abort in the event of any ratelimiting. The value may be larger than a single ratelimit window.
+Amount of seconds a request should wait for ratelimits befor aborting. `-1` means the request will never abort and `0` means the request will abort in the event of any form of ratelimiting. The value may be larger than a single ratelimit window.
 
-Default: -1
+Default: -1 (no aborting)
 
 ## Unstable env vars
 Collection of env vars that may be removed at any time, mainly used for Discord introducing new behaviour on their edge api versions
