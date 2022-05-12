@@ -82,8 +82,9 @@ func main()  {
 
 	bufferSize = lib.EnvGetInt("BUFFER_SIZE", 50)
 	maxBearerLruSize := lib.EnvGetInt("MAX_BEARER_COUNT", 1024)
+	abort := lib.EnvGetInt("RATELIMIT_ABORT_AFTER", -1)
 
-	manager := lib.NewQueueManager(bufferSize, maxBearerLruSize)
+	manager := lib.NewQueueManager(bufferSize, maxBearerLruSize, abort)
 
 	mux := manager.CreateMux()
 

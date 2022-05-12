@@ -163,7 +163,7 @@ func safeSend(queue *QueueChannel, value *QueueItem) {
 	queue.ch <- value
 }
 
-func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash uint64) error {
+func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash uint64, defaultAbort int) error {
 	logger.WithFields(logrus.Fields{
 		"bucket": path,
 		"path": req.URL.Path,
@@ -180,7 +180,7 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 
 		abort = int(valParsed)
 	} else {
-		abort = EnvGetInt("RATELIMIT_ABORT_AFTER", -1)
+		abort = defaultAbort
 	}
 
 	ch := q.getQueueChannel(path, pathHash)
