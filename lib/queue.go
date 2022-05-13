@@ -297,8 +297,16 @@ func return401(item *QueueItem) {
 	item.doneChan <- nil
 }
 
-func return429(item *QueueItem) {
-	Generate429(item.Res)
+func return408Aborted(item *QueueItem) {
+	res := *item.Res
+	res.Header().Set("Generated-By-Proxy", "true")
+	res.WriteHeader(408)
+
+	_, err := res.Write([]byte("{\n  \"message\": \"Request aborted because of ratelimits\",\n  \"code\": 0\n}"))
+	if err != nil {
+		item.errChan <- err
+		return
+	}
 	item.doneChan <- nil
 }
 
@@ -420,7 +428,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 
 				abortItem.abortTime -= seconds
 				if abortItem.abortTime < 0 {
-					return429(abortItem)
+					return408Aborted(abortItem)
 				} else {
 					ch.ch <- abortItem
 				}
