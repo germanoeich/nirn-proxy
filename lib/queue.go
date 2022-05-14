@@ -187,8 +187,7 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 	// waitingUntil may be a past time, making time.Until() negative. This is still handled like
 	// any time, assuming abort is positive.
 	if abort != -1 && abort < int(time.Until(ch.waitingUntil).Seconds()) {
-		Generate429(res)
-		return nil
+		return generate408Aborted(res)
 	}
 
 	doneChan := make(chan *http.Response)
@@ -297,17 +296,14 @@ func return401(item *QueueItem) {
 	item.doneChan <- nil
 }
 
-func return408Aborted(item *QueueItem) {
-	res := *item.Res
+func generate408Aborted(resp *http.ResponseWriter) error {
+	res := *resp
+
 	res.Header().Set("Generated-By-Proxy", "true")
 	res.WriteHeader(408)
 
 	_, err := res.Write([]byte("{\n  \"message\": \"Request aborted because of ratelimits\",\n  \"code\": 0\n}"))
-	if err != nil {
-		item.errChan <- err
-		return
-	}
-	item.doneChan <- nil
+	return err
 }
 
 func isInteraction(url string) bool {
@@ -428,7 +424,12 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 
 				abortItem.abortTime -= seconds
 				if abortItem.abortTime < 0 {
-					return408Aborted(abortItem)
+					err = generate408Aborted(abortItem.Res)
+					if err != nil {
+						abortItem.errChan <- err
+					} else {
+						abortItem.doneChan <- nil
+					}
 				} else {
 					ch.ch <- abortItem
 				}
