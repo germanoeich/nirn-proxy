@@ -39,6 +39,7 @@ Configuration options are
 | MAX_BEARER_COUNT| number                                        | 1024                    |
 | DISABLE_HTTP_2  | bool                                          | true                    |
 | BOT_RATELIMIT_OVERRIDES | string list (comma separated)          | ""                      |
+| RATELIMIT_ABORT_AFTER | number                                  | -1                      |
 
 Information on each config var can be found [here](https://github.com/germanoeich/nirn-proxy/blob/main/CONFIG.md)
 
@@ -51,6 +52,18 @@ The proxy listens on all routes and relays them to Discord, while keeping track 
 When using the proxy, it is safe to remove the ratelimiting logic from clients and fire requests instantly, however, the proxy does not handle retries. If for some reason (i.e shared ratelimits, internal discord ratelimits, etc) the proxy encounters a 429, it will return that to the client. It is safe to immediately retry requests that return 429 or even setup retry logic elsewhere (like in a load balancer or service mesh).
 
 The proxy also guards against known scenarios that might cause a cloudflare ban, like too many webhook 404s or too many 401s.
+
+#### Ratelimit aborting
+
+The proxy allows requests to specify an `X-RateLimit-Abort-After` header (defaulted to the `RATELIMIT_ABORT_AFTER` variable). This sets the amount of seconds to wait in case of ratelimits before the proxy aborts the request and returns a 429 response.
+
+The point of ratelimit aborting is being able to send a request and set a maximum amount of time the request can be ratelimited. Certain enpoints have very high ratelimits and this configuration allows you to send the request and tell the proxy to abort it in case it needs to wait for ratelimits. Compared to timeouts, this is a much more reliable approach in the event of instabilities of the API.
+
+The special (and default) value `-1` indicates a request which should not abort. Set the value to `0` to abort if any ratelimiting will be necessary. If the value is higher than the allowed window of the ratelimit - for example an abort time of `8` for a ratelimit of `5 / 5s` - the value will be subtracted each time the proxy waits for the ratelimit.
+
+The proxy does not pre-emptively calculate how long a request will need to wait for ratelimits, therefore requests may not always immediately abort. In the above example with 8 seconds of abort time, the request will be aborted after roughly 5 seconds when the proxy fills the second window of the ratelimit and the request would have to wait for 10 seconds in total had it not been aborted.
+
+To use this effectively, you'll need to make changes to your library so that it does not attempt to retry a request sent with the header. In Python for example, this could be implemented as a context manager which catches an exception raised by the API methods.
 
 ### Proxy specific responses
 
