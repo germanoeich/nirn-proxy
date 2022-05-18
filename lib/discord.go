@@ -43,7 +43,7 @@ func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
 			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          100,
+			MaxIdleConns:          0,
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
@@ -68,7 +68,7 @@ func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
 
 		transport = http.Transport{
 			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          1000,
+			MaxIdleConns:          0,
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 2 * time.Second,
