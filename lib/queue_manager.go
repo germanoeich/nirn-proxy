@@ -262,6 +262,11 @@ func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (r
 }
 
 func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Request, queueType QueueType, path string, pathHash uint64, token string) {
+	logEntry := logger.WithField("clientIp", req.RemoteAddr)
+	forwdFor := req.Header.Get("X-Forwarded-For")
+	if forwdFor != "" {
+		logEntry = logEntry.WithField("forwardedFor", forwdFor)
+	}
 	routeTo := m.calculateRoute(pathHash)
 
 	routeToHeader := req.Header.Get("nirn-routed-to")
@@ -285,7 +290,7 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 			(*resp).WriteHeader(500)
 			(*resp).Write([]byte(err.Error()))
 			ErrorCounter.Inc()
-			logger.WithFields(logrus.Fields{"function": "getOrCreateQueue", "queueType": queueType}).Error(err)
+			logEntry.WithFields(logrus.Fields{"function": "getOrCreateQueue", "queueType": queueType}).Error(err)
 			return
 		}
 
@@ -303,7 +308,7 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 			} else {
 				err = m.clusterGlobalRateLimiter.FireGlobalRequest(req.Context(), globalRouteTo, botHash, botLimit)
 				if err != nil {
-					logger.WithFields(logrus.Fields{"function": "FireGlobalRequest"}).Error(err)
+					logEntry.WithField("function", "FireGlobalRequest").Error(err)
 					ErrorCounter.Inc()
 					Generate429(resp)
 					return
@@ -312,7 +317,7 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 		}
 		err = q.Queue(req, resp, path, pathHash, m.abortTime)
 		if err != nil {
-			log := logger.WithFields(logrus.Fields{"function": "Queue"})
+			log := logEntry.WithField("function", "Queue")
 			if errors.Is(err, context.DeadlineExceeded) {
 				log.Warn(err)
 			} else {
@@ -325,10 +330,10 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 		if err == nil {
 			err = CopyResponseToResponseWriter(res, resp)
 			if err != nil {
-				logger.WithFields(logrus.Fields{"function": "CopyResponseToResponseWriter"}).Error(err)
+				logEntry.WithField("function", "CopyResponseToResponseWriter").Error(err)
 			}
 		} else {
-			logger.WithFields(logrus.Fields{"function": "routeRequest"}).Error(err)
+			logEntry.WithField("function", "routeRequest").Error(err)
 			Generate429(resp)
 		}
 	}
