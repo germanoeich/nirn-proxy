@@ -19,10 +19,14 @@ type QueueItem struct {
 	Res *http.ResponseWriter
 	doneChan chan *http.Response
 	errChan chan error
+	// -1 means no abort
+	abortTime int
 }
 
 type QueueChannel struct {
+	sync.Mutex
 	ch chan *QueueItem
+	waitingUntil time.Time
 	lastUsed time.Time
 }
 
@@ -145,7 +149,10 @@ func (q *RequestQueue) tickSweep() {
 	}
 }
 
-func safeSend(ch chan *QueueItem, value *QueueItem) {
+func safeSend(queue *QueueChannel, value *QueueItem) {
+	queue.Lock()
+	defer queue.Unlock() // Will be called after the deferred function below
+
 	defer func() {
 		if recover() != nil {
 			value.errChan <- errors.New("failed to send due to closed channel, sending 429 for client to retry")
@@ -153,22 +160,40 @@ func safeSend(ch chan *QueueItem, value *QueueItem) {
 		}
 	}()
 
-	ch <- value
+	queue.ch <- value
 }
 
-func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash uint64) error {
+func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash uint64, defaultAbort int) error {
 	logger.WithFields(logrus.Fields{
 		"bucket": path,
 		"path": req.URL.Path,
 		"method": req.Method,
 	}).Trace("Inbound request")
 
+	var abort int
+	abortHeader := req.Header.Get("X-RateLimit-Abort-After")
+	if abortHeader != "" {
+		valParsed, err := strconv.ParseInt(abortHeader, 10, 64)
+		if err != nil {
+			return err
+		}
+
+		abort = int(valParsed)
+	} else {
+		abort = defaultAbort
+	}
+
 	ch := q.getQueueChannel(path, pathHash)
+	// waitingUntil may be a past time, making time.Until() negative. This is still handled like
+	// any time, assuming abort is positive.
+	if abort != -1 && abort < int(time.Until(ch.waitingUntil).Seconds()) {
+		return generate408Aborted(res)
+	}
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
 
-	safeSend(ch.ch, &QueueItem{req, res, doneChan, errChan })
+	safeSend(ch, &QueueItem{ req, res, doneChan, errChan, abort })
 
 	select {
 	case <-doneChan:
@@ -184,7 +209,11 @@ func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChann
 	defer q.Unlock()
 	ch, ok := q.queues[pathHash]
 	if !ok {
-		ch = &QueueChannel{ make(chan *QueueItem, q.bufferSize), t }
+		ch = &QueueChannel{
+			ch: make(chan *QueueItem, q.bufferSize),
+			waitingUntil: t,
+			lastUsed: t,
+		}
 		q.queues[pathHash] = ch
 		// It's important that we only have 1 goroutine per channel
 		go q.subscribe(ch, path, pathHash)
@@ -265,6 +294,16 @@ func return401(item *QueueItem) {
 		return
 	}
 	item.doneChan <- nil
+}
+
+func generate408Aborted(resp *http.ResponseWriter) error {
+	res := *resp
+
+	res.Header().Set("Generated-By-Proxy", "true")
+	res.WriteHeader(408)
+
+	_, err := res.Write([]byte("{\n  \"message\": \"Request aborted because of ratelimits\",\n  \"code\": 0\n}"))
+	return err
 }
 
 func isInteraction(url string) bool {
@@ -366,8 +405,38 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 				atomic.StoreInt64(q.isTokenInvalid, 999)
 			}
 		}
+
 		if remaining == 0 || resp.StatusCode == 429 {
-			time.Sleep(time.Until(time.Now().Add(resetAfter)))
+			// Before sleeping for the ratelimit, check if there are any requests that would like to be aborted
+			ch.Lock()
+			ch.waitingUntil = time.Now().Add(resetAfter)
+			duration := time.Until(ch.waitingUntil)
+			seconds := int(duration.Seconds())
+
+			length := len(ch.ch)
+			for i := 0; i < length; i++ {
+				abortItem := <-ch.ch
+
+				if abortItem.abortTime == -1 {
+					ch.ch <- abortItem
+					continue
+				}
+
+				abortItem.abortTime -= seconds
+				if abortItem.abortTime < 0 {
+					err = generate408Aborted(abortItem.Res)
+					if err != nil {
+						abortItem.errChan <- err
+					} else {
+						abortItem.doneChan <- nil
+					}
+				} else {
+					ch.ch <- abortItem
+				}
+			}
+			ch.Unlock()
+
+			time.Sleep(duration)
 		}
 		prevRem, prevReset = remaining, resetAfter
 	}

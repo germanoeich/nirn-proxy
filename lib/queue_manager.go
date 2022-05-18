@@ -32,6 +32,8 @@ type QueueManager struct {
 	clusterGlobalRateLimiter *ClusterGlobalRateLimiter
 	orderedClusterMembers []string
 	nameToAddressMap map[string]string
+	// -1 means no abort
+	abortTime int
 	localNodeName string
 	localNodeIP              string
 	localNodeProxyListenAddr string
@@ -41,7 +43,7 @@ func onEvictLruItem(key interface{}, value interface{}) {
 	go value.(*RequestQueue).destroy()
 }
 
-func NewQueueManager(bufferSize int, maxBearerLruSize int) *QueueManager {
+func NewQueueManager(bufferSize int, maxBearerLruSize int, abortTime int) *QueueManager {
 	bearerMap, err := lru.NewWithEvict(maxBearerLruSize, onEvictLruItem)
 
 	if err != nil {
@@ -52,6 +54,7 @@ func NewQueueManager(bufferSize int, maxBearerLruSize int) *QueueManager {
 		queues: make(map[string]*RequestQueue),
 		bearerQueues: bearerMap,
 		bufferSize: bufferSize,
+		abortTime: abortTime,
 		cluster: nil,
 		clusterGlobalRateLimiter: NewClusterGlobalRateLimiter(),
 	}
@@ -307,7 +310,7 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 				}
 			}
 		}
-		err = q.Queue(req, resp, path, pathHash)
+		err = q.Queue(req, resp, path, pathHash, m.abortTime)
 		if err != nil {
 			log := logger.WithFields(logrus.Fields{"function": "Queue"})
 			if errors.Is(err, context.DeadlineExceeded) {
