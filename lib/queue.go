@@ -223,7 +223,7 @@ func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChann
 	return ch
 }
 
-func parseHeaders(headers *http.Header) (int64, int64, time.Duration, bool, error) {
+func parseHeaders(headers *http.Header, preferRetryAfter bool) (int64, int64, time.Duration, bool, error) {
 	if headers == nil {
 		return 0, 0, 0, false, errors.New("null headers")
 	}
@@ -231,8 +231,9 @@ func parseHeaders(headers *http.Header) (int64, int64, time.Duration, bool, erro
 	limit := headers.Get("x-ratelimit-limit")
 	remaining := headers.Get("x-ratelimit-remaining")
 	resetAfter := headers.Get("x-ratelimit-reset-after")
-	if resetAfter == "" {
-		// Globals return no x-ratelimit-reset-after headers, this is the best option without parsing the body
+	if resetAfter == "" || preferRetryAfter {
+		// Globals return no x-ratelimit-reset-after headers, shared ratelimits have a wrong reset-after
+		// this is the best option without parsing the body
 		resetAfter = headers.Get("retry-after")
 	}
 	isGlobal := headers.Get("x-ratelimit-global") == "true"
@@ -345,7 +346,9 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			continue
 		}
 
-		_, remaining, resetAfter, isGlobal, err := parseHeaders(&resp.Header)
+		scope := resp.Header.Get("x-ratelimit-scope")
+
+		_, remaining, resetAfter, isGlobal, err := parseHeaders(&resp.Header, scope != "user")
 
 		if isGlobal {
 			//Lock global
@@ -364,7 +367,6 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		}
 		item.doneChan <- resp
 
-		scope := resp.Header.Get("x-ratelimit-scope")
 		if resp.StatusCode == 429 && scope != "shared"{
 			logger.WithFields(logrus.Fields{
 				"prevRemaining": prevRem,
