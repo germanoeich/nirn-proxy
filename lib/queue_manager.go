@@ -338,11 +338,6 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 			Generate429(resp)
 		}
 	}
-
-	if err != nil {
-		ErrorCounter.Inc()
-		return
-	}
 }
 
 func (m *QueueManager) HandleGlobal(w http.ResponseWriter, r *http.Request) {
