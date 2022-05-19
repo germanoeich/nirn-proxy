@@ -231,7 +231,8 @@ func parseHeaders(headers *http.Header, preferRetryAfter bool) (int64, int64, ti
 	limit := headers.Get("x-ratelimit-limit")
 	remaining := headers.Get("x-ratelimit-remaining")
 	resetAfter := headers.Get("x-ratelimit-reset-after")
-	if resetAfter == "" || preferRetryAfter {
+	retryAfter := headers.Get("retry-after")
+	if resetAfter == "" || (preferRetryAfter && retryAfter != "") {
 		// Globals return no x-ratelimit-reset-after headers, shared ratelimits have a wrong reset-after
 		// this is the best option without parsing the body
 		resetAfter = headers.Get("retry-after")
