@@ -334,7 +334,13 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 				logEntry.WithField("function", "CopyResponseToResponseWriter").Error(err)
 			}
 		} else {
-			logEntry.WithField("function", "routeRequest").Error(err)
+			logEntry := logEntry.WithField("function", "routeRequest")
+			if !errors.Is(err, context.Canceled) {
+				logEntry.Error(err)
+			} else {
+				logEntry.Warn(err)
+			}
+			// if it's a context canceled on the client it won't get the 429 anyway, if it's within the cluster we should retry
 			Generate429(resp)
 		}
 	}
