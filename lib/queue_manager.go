@@ -334,7 +334,7 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 				logEntry.WithField("function", "CopyResponseToResponseWriter").Error(err)
 			}
 		} else {
-			logEntry := logEntry.WithField("function", "routeRequest")
+			logEntry = logEntry.WithField("function", "routeRequest")
 			if !errors.Is(err, context.Canceled) {
 				logEntry.Error(err)
 			} else {
