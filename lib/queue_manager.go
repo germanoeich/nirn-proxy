@@ -239,13 +239,14 @@ func (m *QueueManager) getOrCreateBearerQueue(token string) (*RequestQueue, erro
 }
 
 func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http.Request) {
+	reqStart := time.Now()
 	ConnectionsOpen.Inc()
 	defer ConnectionsOpen.Dec()
 
 	token := req.Header.Get("Authorization")
 	routingHash, path, queueType := m.GetRequestRoutingInfo(req, token)
 
-	m.fulfillRequest(&resp, req, queueType, path, routingHash, token)
+	m.fulfillRequest(&resp, req, queueType, path, routingHash, token, reqStart)
 }
 
 func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (routingHash uint64, path string, queueType QueueType) {
@@ -261,7 +262,7 @@ func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (r
 	return
 }
 
-func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Request, queueType QueueType, path string, pathHash uint64, token string) {
+func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Request, queueType QueueType, path string, pathHash uint64, token string, reqStart time.Time) {
 	logEntry := logger.WithField("clientIp", req.RemoteAddr)
 	forwdFor := req.Header.Get("X-Forwarded-For")
 	if forwdFor != "" {
@@ -318,8 +319,8 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 		err = q.Queue(req, resp, path, pathHash, m.abortTime)
 		if err != nil {
 			log := logEntry.WithField("function", "Queue")
-			if errors.Is(err, context.DeadlineExceeded) {
-				log.Warn(err)
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				log.WithField("waitedFor", time.Since(reqStart)).Warn(err)
 			} else {
 				log.Error(err)
 			}
