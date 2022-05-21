@@ -111,7 +111,7 @@ This will vary depending on your usage, how many unique routes you see, etc. For
 |------------------------------------|----------------------------------------|------------------------------------------------------------|
 |nirn_proxy_error                    | none                                   | Counter for errors                                         |
 |nirn_proxy_requests                 | method, status, route, clientId        | Histogram that keeps track of all request metrics          |
-|nirn_proxy_open_connections         | none                                   | Gauge for open client connections with the proxy           |
+|nirn_proxy_open_connections         | route, method                          | Gauge for open client connections with the proxy           |
 |nirn_proxy_requests_routed_sent     | none                                   | Counter for requests routed to other nodes                 |
 |nirn_proxy_requests_routed_received | none                                   | Counter for requests received from other nodes             |
 |nirn_proxy_requests_routed_error    | none                                   | Counter for requests routed that failed                    |
