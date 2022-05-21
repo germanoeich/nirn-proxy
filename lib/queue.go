@@ -409,6 +409,12 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			}
 		}
 
+		// Prevent reaction bucket from being stuck
+		if resp.StatusCode == 429 && scope == "shared" && (path == "/channels/!/messages/!/reactions/!modify" || path == "/channels/!/messages/!/reactions/!/!") {
+			prevRem, prevReset = remaining, resetAfter
+			continue
+		}
+
 		if remaining == 0 || resp.StatusCode == 429 {
 			// Before sleeping for the ratelimit, check if there are any requests that would like to be aborted
 			ch.Lock()
