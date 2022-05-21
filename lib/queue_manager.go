@@ -240,12 +240,12 @@ func (m *QueueManager) getOrCreateBearerQueue(token string) (*RequestQueue, erro
 
 func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http.Request) {
 	reqStart := time.Now()
+	metricsPath := GetMetricsPath(req.URL.Path)
+	ConnectionsOpen.With(map[string]string{"route": metricsPath, "method": req.Method}).Inc()
+	defer ConnectionsOpen.With(map[string]string{"route": metricsPath, "method": req.Method}).Dec()
 
 	token := req.Header.Get("Authorization")
 	routingHash, path, queueType := m.GetRequestRoutingInfo(req, token)
-
-	ConnectionsOpen.With(map[string]string{"route": path, "method": req.Method}).Inc()
-	defer ConnectionsOpen.With(map[string]string{"route": path, "method": req.Method}).Dec()
 
 	m.fulfillRequest(&resp, req, queueType, path, routingHash, token, reqStart)
 }
