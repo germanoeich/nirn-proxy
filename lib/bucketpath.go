@@ -141,11 +141,12 @@ func GetOptimisticBucketPath(url string, method string) string {
 			if currMajor == MajorChannels && part == "reactions" {
 				// reaction put/delete fall under a different bucket from other reaction endpoints
 				if method == "PUT" || method == "DELETE" {
-					return "/" + MajorChannels + "/!/messages/!/reactions/!modify"
+					bucket.WriteString("/reactions/!modify")
+					break
 				}
 				//All other reaction endpoints falls under the same bucket, so it's irrelevant if the user
 				//is passing userid, emoji, etc.
-				return "/" + MajorChannels + "/!/messages/!/reactions/!/!"
+				bucket.WriteString("/reactions/!/!")
 				//Reactions can only be followed by emoji/userid combo, since we don't care, break
 				break
 			}
