@@ -607,7 +607,7 @@
           "exemplar": true,
           "expr": "sum by (route) (rate(nirn_proxy_requests_count{clientId=~\"$clientId\"}[$__rate_interval]))",
           "interval": "",
-          "legendFormat": "{{method}}",
+          "legendFormat": "{{route}}",
           "queryType": "randomWalk",
           "refId": "A"
         }
