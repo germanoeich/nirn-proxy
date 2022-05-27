@@ -206,11 +206,11 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 
 func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
 	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com" + path + "?" + query, body)
-	discordReq.Header = header
 	if err != nil {
 		return nil, err
 	}
 
+	discordReq.Header = header
 	startTime := time.Now()
 	discordResp, err := client.Do(discordReq)
 
