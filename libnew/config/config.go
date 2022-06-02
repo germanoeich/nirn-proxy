@@ -26,6 +26,7 @@ type NirnConfig struct {
 	MaxBearerCount int
 	DisableHTTP2 bool
 	BotRatelimitOverride map[string]uint
+	ratelimitAbortAfter int
 }
 
 func Get() NirnConfig {
@@ -48,6 +49,7 @@ func Parse() NirnConfig {
 	maxBearerLruSize := util.EnvGetInt("MAX_BEARER_COUNT", 1024)
 	disableHttp2 := util.EnvGetBool("DISABLE_HTTP_2", true)
 	globalOverrides := util.EnvGet("BOT_RATELIMIT_OVERRIDES", "")
+	ratelimitAbortAfter := util.EnvGetInt("RATELIMIT_ABORT_AFTER", -1)
 
 	cfgSingleton = NirnConfig{
 		LogLevel:             logLevel,
@@ -65,6 +67,7 @@ func Parse() NirnConfig {
 		MaxBearerCount:       maxBearerLruSize,
 		DisableHTTP2:         disableHttp2,
 		BotRatelimitOverride: parseGlobalOverrides(globalOverrides),
+		ratelimitAbortAfter:  ratelimitAbortAfter,
 	}
 
 	return cfgSingleton

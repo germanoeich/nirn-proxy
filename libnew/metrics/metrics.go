@@ -53,3 +53,7 @@ func StartMetrics(addr string) {
 		return
 	}
 }
+
+func ObserveRequestHistogram(route string, status string, method string, clientId string, elapsed float64) {
+	RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": clientId}).Observe(elapsed)
+}
