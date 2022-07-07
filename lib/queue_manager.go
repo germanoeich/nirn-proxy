@@ -22,19 +22,26 @@ const (
 	Bearer
 )
 
+// Some routes that have @me on the path don't really spread out through the cluster, causing issues
+// and exacerbating tail latency hits from Discord. Only routes with no ratelimit headers should be put here
+var pathsToRouteLocally = map[uint64]struct{}{
+	HashCRC64("/users/@me/channels"): {},
+	HashCRC64("/users/@me"):          {},
+}
+
 type QueueManager struct {
 	sync.RWMutex
-	queues map[string]*RequestQueue
-	bearerQueues *lru.Cache
-	bearerMu sync.RWMutex
-	bufferSize int
-	cluster *memberlist.Memberlist
+	queues                   map[string]*RequestQueue
+	bearerQueues             *lru.Cache
+	bearerMu                 sync.RWMutex
+	bufferSize               int
+	cluster                  *memberlist.Memberlist
 	clusterGlobalRateLimiter *ClusterGlobalRateLimiter
-	orderedClusterMembers []string
-	nameToAddressMap map[string]string
+	orderedClusterMembers    []string
+	nameToAddressMap         map[string]string
 	// -1 means no abort
-	abortTime int
-	localNodeName string
+	abortTime                int
+	localNodeName            string
 	localNodeIP              string
 	localNodeProxyListenAddr string
 }
@@ -51,11 +58,11 @@ func NewQueueManager(bufferSize int, maxBearerLruSize int, abortTime int) *Queue
 	}
 
 	q := &QueueManager{
-		queues: make(map[string]*RequestQueue),
-		bearerQueues: bearerMap,
-		bufferSize: bufferSize,
-		abortTime: abortTime,
-		cluster: nil,
+		queues:                   make(map[string]*RequestQueue),
+		bearerQueues:             bearerMap,
+		bufferSize:               bufferSize,
+		abortTime:                abortTime,
+		cluster:                  nil,
 		clusterGlobalRateLimiter: NewClusterGlobalRateLimiter(),
 	}
 
@@ -103,8 +110,8 @@ func (m *QueueManager) onNodeLeave(node *memberlist.Node) {
 
 func (m *QueueManager) GetEventDelegate() *NirnEvents {
 	return &NirnEvents{
-		OnJoin:        m.onNodeJoin,
-		OnLeave:       m.onNodeLeave,
+		OnJoin:  m.onNodeJoin,
+		OnLeave: m.onNodeLeave,
 	}
 }
 
@@ -123,6 +130,10 @@ func (m *QueueManager) calculateRoute(pathHash uint64) string {
 	}
 
 	if pathHash == 0 {
+		return ""
+	}
+
+	if _, ok := pathsToRouteLocally[pathHash]; ok {
 		return ""
 	}
 
@@ -147,7 +158,7 @@ func (m *QueueManager) calculateRoute(pathHash uint64) string {
 }
 
 func (m *QueueManager) routeRequest(addr string, req *http.Request) (*http.Response, error) {
-	nodeReq, err := http.NewRequestWithContext(req.Context(), req.Method, "http://" + addr + req.URL.Path + "?" + req.URL.RawQuery, req.Body)
+	nodeReq, err := http.NewRequestWithContext(req.Context(), req.Method, "http://"+addr+req.URL.Path+"?"+req.URL.RawQuery, req.Body)
 	nodeReq.Header = req.Header.Clone()
 	nodeReq.Header.Set("nirn-routed-to", addr)
 	if err != nil {
@@ -155,8 +166,8 @@ func (m *QueueManager) routeRequest(addr string, req *http.Request) (*http.Respo
 	}
 
 	logger.WithFields(logrus.Fields{
-		"to": addr,
-		"path": req.URL.Path,
+		"to":     addr,
+		"path":   req.URL.Path,
 		"method": req.Method,
 	}).Trace("Routing request to node in cluster")
 	resp, err := client.Do(nodeReq)
