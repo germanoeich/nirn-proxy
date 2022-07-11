@@ -1,15 +1,15 @@
 package clustering
 
 import (
-	"github.com/germanoeich/nirn-proxy/libnew/logging"
+	"github.com/germanoeich/nirn-proxy/libnew/util"
 	"github.com/hashicorp/memberlist"
 	"os"
 	"time"
 )
 
-var logger = logging.GetLogger("memberlist")
+var logger = util.GetLogger("memberlist")
 
-func InitMemberList(knownMembers []string, port int, proxyPort string, delegate *NirnEvents) *memberlist.Memberlist {
+func InitMemberList(knownMembers []string, port int, proxyPort string, delegate *NirnEvents, name string) *memberlist.Memberlist {
 	config := memberlist.DefaultLANConfig()
 	config.BindPort = port
 	config.AdvertisePort = port
@@ -17,7 +17,12 @@ func InitMemberList(knownMembers []string, port int, proxyPort string, delegate 
 		proxyPort: proxyPort,
 	}
 
-	config.Events = delegate
+	if delegate != nil {
+		config.Events = delegate
+	}
+
+	// Should default to os.Hostname unless in a test env
+	config.Name = name
 
 	//DEBUG CODE
 	if os.Getenv("NODE_NAME") != "" {

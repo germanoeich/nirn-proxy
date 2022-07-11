@@ -4,7 +4,6 @@ import (
 	"context"
 	lib "github.com/germanoeich/nirn-proxy/libnew"
 	"github.com/germanoeich/nirn-proxy/libnew/config"
-	"github.com/germanoeich/nirn-proxy/libnew/logging"
 	"github.com/germanoeich/nirn-proxy/libnew/metrics"
 	"github.com/germanoeich/nirn-proxy/libnew/util"
 	_ "github.com/joho/godotenv/autoload"
@@ -16,9 +15,9 @@ import (
 	"time"
 )
 
-func main()  {
+func main() {
 	cfg := config.Parse()
-	logger := logging.GetLogger("Main")
+	logger := util.GetLogger("Main")
 
 	if cfg.EnablePProf {
 		go util.StartProfileServer()
@@ -37,7 +36,7 @@ func main()  {
 	}()
 
 	// Wait for the http server to ready before joining the cluster
-	<- time.After(1 * time.Second)
+	<-time.After(1 * time.Second)
 
 	clusterManager := lib.NewClusterManager()
 	httpHandler.SetClusterManager(clusterManager)

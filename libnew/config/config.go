@@ -11,22 +11,22 @@ import (
 var cfgSingleton NirnConfig
 
 type NirnConfig struct {
-	LogLevel string
-	Port string
-	MetricsPort string
-	EnableMetrics bool
-	EnablePProf bool
-	BufferSize int
-	OutboundIP string
-	BindIP string
-	RequestTimeout time.Duration
-	ClusterPort int
-	ClusterMembers []string
-	ClusterDNS string
-	MaxBearerCount int
-	DisableHTTP2 bool
+	LogLevel             string
+	Port                 string
+	MetricsPort          string
+	EnableMetrics        bool
+	EnablePProf          bool
+	BufferSize           int
+	OutboundIP           string
+	BindIP               string
+	RequestTimeout       time.Duration
+	ClusterPort          int
+	ClusterMembers       []string
+	ClusterDNS           string
+	MaxBearerCount       int
+	DisableHTTP2         bool
 	BotRatelimitOverride map[string]uint
-	ratelimitAbortAfter int
+	RatelimitAbortAfter  int
 }
 
 func Get() NirnConfig {
@@ -67,7 +67,7 @@ func Parse() NirnConfig {
 		MaxBearerCount:       maxBearerLruSize,
 		DisableHTTP2:         disableHttp2,
 		BotRatelimitOverride: parseGlobalOverrides(globalOverrides),
-		ratelimitAbortAfter:  ratelimitAbortAfter,
+		RatelimitAbortAfter:  ratelimitAbortAfter,
 	}
 
 	return cfgSingleton

@@ -18,8 +18,8 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
-func CopyResponseToResponseWriter(resp *http.Response, respWriter *http.ResponseWriter) error {
-	writer := *respWriter
+func CopyResponseToResponseWriter(resp *http.Response, respWriter http.ResponseWriter) error {
+	writer := respWriter
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		writer.WriteHeader(500)

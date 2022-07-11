@@ -1,7 +1,6 @@
-package logging
+package util
 
 import (
-	"github.com/germanoeich/nirn-proxy/libnew/util"
 	"github.com/sirupsen/logrus"
 	"regexp"
 )
@@ -26,7 +25,7 @@ func (h *GlobalHook) Fire(e *logrus.Entry) error {
 func GetLogger(subsystem string) *logrus.Entry {
 	var logger = logrus.New()
 
-	logLevel := util.EnvGet("LOG_LEVEL", "info")
+	logLevel := EnvGet("LOG_LEVEL", "info")
 	lvl, err := logrus.ParseLevel(logLevel)
 
 	if err != nil {

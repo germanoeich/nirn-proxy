@@ -5,7 +5,6 @@ import (
 	"github.com/germanoeich/nirn-proxy/libnew/bucket"
 	"github.com/germanoeich/nirn-proxy/libnew/config"
 	"github.com/germanoeich/nirn-proxy/libnew/enums"
-	"github.com/germanoeich/nirn-proxy/libnew/logging"
 	"github.com/germanoeich/nirn-proxy/libnew/metrics"
 	"github.com/germanoeich/nirn-proxy/libnew/util"
 	"github.com/sirupsen/logrus"
@@ -16,14 +15,14 @@ import (
 
 type HttpHandler struct {
 	globalRateLimiter *GlobalRateLimiter
-	clusterManager *ClusterManager
-	s *http.Server
-	logger *logrus.Entry
+	clusterManager    *ClusterManager
+	s                 *http.Server
+	logger            *logrus.Entry
 }
 
 func NewHttpHandler() *HttpHandler {
 	return &HttpHandler{
-		logger: logging.GetLogger("HttpHandler"),
+		logger:            util.GetLogger("HttpHandler"),
 		globalRateLimiter: NewGlobalRateLimiter(),
 	}
 }

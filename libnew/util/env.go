@@ -25,7 +25,6 @@ func EnvGetBool(name string, defaultVal bool) bool {
 	return val == "true"
 }
 
-
 func EnvMustGet(name string) string {
 	val := os.Getenv(name)
 	if val == "" {

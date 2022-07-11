@@ -5,7 +5,7 @@ import (
 	"errors"
 	"github.com/Clever/leakybucket"
 	"github.com/Clever/leakybucket/memory"
-	"github.com/germanoeich/nirn-proxy/libnew/logging"
+	"github.com/germanoeich/nirn-proxy/libnew/util"
 	"github.com/sirupsen/logrus"
 	"net/http"
 	"strconv"
@@ -16,18 +16,18 @@ import (
 type GlobalRateLimiter struct {
 	sync.RWMutex
 	globalBucketsMap map[uint64]*leakybucket.Bucket
-	memStorage *memory.Storage
-	logger *logrus.Entry
-	client *http.Client
+	memStorage       *memory.Storage
+	logger           *logrus.Entry
+	client           *http.Client
 }
 
 func NewGlobalRateLimiter() *GlobalRateLimiter {
 	memStorage := memory.New()
 	return &GlobalRateLimiter{
-		memStorage: memStorage,
+		memStorage:       memStorage,
 		globalBucketsMap: make(map[uint64]*leakybucket.Bucket),
-		logger: logging.GetLogger("globalratelimiter"),
-		client: http.DefaultClient,
+		logger:           util.GetLogger("globalratelimiter"),
+		client:           http.DefaultClient,
 	}
 }
 
@@ -58,7 +58,7 @@ func (c *GlobalRateLimiter) getOrCreate(botHash uint64, botLimit uint) *leakybuc
 			return b
 		}
 
-		globalBucket, _ := c.memStorage.Create(strconv.FormatUint(botHash, 10), botLimit, 1 * time.Second)
+		globalBucket, _ := c.memStorage.Create(strconv.FormatUint(botHash, 10), botLimit, 1*time.Second)
 		c.globalBucketsMap[botHash] = &globalBucket
 		c.Unlock()
 		return &globalBucket
@@ -68,7 +68,7 @@ func (c *GlobalRateLimiter) getOrCreate(botHash uint64, botLimit uint) *leakybuc
 }
 
 func (c *GlobalRateLimiter) FireGlobalRequest(ctx context.Context, addr string, botHash uint64, botLimit uint) error {
-	globalReq, err := http.NewRequestWithContext(ctx, "GET", "http://" + addr + "/nirn/global", nil)
+	globalReq, err := http.NewRequestWithContext(ctx, "GET", "http://"+addr+"/nirn/global", nil)
 	if err != nil {
 		return err
 	}

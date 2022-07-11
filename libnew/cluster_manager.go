@@ -6,6 +6,7 @@ import (
 	"github.com/hashicorp/memberlist"
 	"github.com/sirupsen/logrus"
 	"net"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -13,14 +14,14 @@ import (
 
 type ClusterManager struct {
 	sync.RWMutex
-	cluster *memberlist.Memberlist
+	cluster                  *memberlist.Memberlist
 	clusterGlobalRateLimiter *GlobalRateLimiter
-	orderedClusterMembers []string
-	nameToAddressMap map[string]string
-	localNodeName string
+	orderedClusterMembers    []string
+	nameToAddressMap         map[string]string
+	localNodeName            string
 	localNodeIP              string
 	localNodeProxyListenAddr string
-	logger *logrus.Entry
+	logger                   *logrus.Entry
 }
 
 func NewClusterManager() *ClusterManager {
@@ -49,7 +50,8 @@ func NewClusterManager() *ClusterManager {
 	}
 
 	if len(knownMembers) != 0 {
-		q.setCluster(clustering.InitMemberList(knownMembers, cfg.ClusterPort, cfg.Port, q.getEventDelegate()), cfg.Port)
+		hostname, _ := os.Hostname()
+		q.setCluster(clustering.InitMemberList(knownMembers, cfg.ClusterPort, cfg.Port, q.getEventDelegate(), hostname), cfg.Port)
 	}
 
 	return q
@@ -94,8 +96,8 @@ func (m *ClusterManager) onNodeLeave(node *memberlist.Node) {
 
 func (m *ClusterManager) getEventDelegate() *clustering.NirnEvents {
 	return &clustering.NirnEvents{
-		OnJoin:        m.onNodeJoin,
-		OnLeave:       m.onNodeLeave,
+		OnJoin:  m.onNodeJoin,
+		OnLeave: m.onNodeLeave,
 	}
 }
 
