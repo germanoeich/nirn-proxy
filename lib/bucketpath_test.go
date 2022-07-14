@@ -16,6 +16,10 @@ func TestPaths(t *testing.T) {
 		{"/api/v7/channels/203039963636301824/pins", "GET", "/channels/203039963636301824/pins"},
 		{"/api/v6/channels/872712139712913438/messages/872712150509047809/reactions/%F0%9F%98%8B", "GET", "/channels/872712139712913438/messages/!/reactions/!/!"},
 		{"/api/v10/channels/872712139712913438/messages/872712150509047809/reactions/PandaOhShit:863985751205085195", "GET", "/channels/872712139712913438/messages/!/reactions/!/!"},
+		{"/api/v9/channels/872712139712913438/messages/872712150509047809/reactions/PandaOhShit:863985751205085195", "PUT", "/channels/872712139712913438/messages/!/reactions/!modify"},
+		{"/api/v9/channels/872712139712913438/messages/872712150509047809/reactions/PandaOhShit:863985751205085195", "DELETE", "/channels/872712139712913438/messages/!/reactions/!modify"},
+		{"/api/v9/channels/872712139712913438/messages/872712150509047809/reactions/PandaOhShit:863985751205085195/@me", "DELETE", "/channels/872712139712913438/messages/!/reactions/!modify"},
+		{"/api/v9/channels/872712139712913438/messages/872712150509047809/reactions/PandaOhShit:863985751205085195/203039963636301824", "DELETE", "/channels/872712139712913438/messages/!/reactions/!modify"},
 		// Hooks major
 		{"/api/v9/webhooks/203039963636301824", "GET", "/webhooks/203039963636301824"},
 		{"/api/v9/webhooks/203039963636301824/VSOzAqY1OZFF5WJVtbIzFtmjGupk-84Hn0A_ZzToF_CHsPIeCk0Q9Uok_mjxR0dNtApI", "POST", "/webhooks/203039963636301824/!"},

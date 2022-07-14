@@ -39,6 +39,7 @@ Configuration options are
 | MAX_BEARER_COUNT| number                                        | 1024                    |
 | DISABLE_HTTP_2  | bool                                          | true                    |
 | BOT_RATELIMIT_OVERRIDES | string list (comma separated)          | ""                      |
+| RATELIMIT_ABORT_AFTER | number                                  | -1                      |
 
 Information on each config var can be found [here](https://github.com/germanoeich/nirn-proxy/blob/main/CONFIG.md)
 
@@ -52,9 +53,21 @@ When using the proxy, it is safe to remove the ratelimiting logic from clients a
 
 The proxy also guards against known scenarios that might cause a cloudflare ban, like too many webhook 404s or too many 401s.
 
+#### Ratelimit aborting
+
+The proxy allows requests to specify an `X-RateLimit-Abort-After` header (defaulted to the `RATELIMIT_ABORT_AFTER` variable). This sets the amount of seconds to wait in case of ratelimits before the proxy aborts the request and returns a 408 response.
+
+The point of ratelimit aborting is being able to send a request and set a maximum amount of time the request can be ratelimited. Certain enpoints have very high ratelimits and this configuration allows you to send the request and tell the proxy to abort it in case it needs to wait for ratelimits. Compared to timeouts, this is a much more reliable approach in the event of instabilities of the API.
+
+The special (and default) value `-1` indicates a request which should not abort. Set the value to `0` to abort if any ratelimiting will be necessary. If the value is higher than the allowed window of the ratelimit - for example an abort time of `8` for a ratelimit of `5 / 5s` - the value will be subtracted each time the proxy waits for the ratelimit.
+
+The proxy does not pre-emptively calculate how long a request will need to wait for ratelimits, therefore requests may not always immediately abort. In the above example with 8 seconds of abort time, the request will be aborted after roughly 5 seconds when the proxy fills the second window of the ratelimit and the request would have to wait for 10 seconds in total had it not been aborted.
+
 ### Proxy specific responses
 
 The proxy may return a 408 Request Timeout if Discord takes more than $REQUEST_TIMEOUT milliseconds to respond. This allows you to identify and react to routes that have issues.
+
+Requests may also return a 408 status code in the event that they were aborted because of ratelimits, as documented above.
 
 ### Limitations
 
@@ -98,7 +111,7 @@ This will vary depending on your usage, how many unique routes you see, etc. For
 |------------------------------------|----------------------------------------|------------------------------------------------------------|
 |nirn_proxy_error                    | none                                   | Counter for errors                                         |
 |nirn_proxy_requests                 | method, status, route, clientId        | Histogram that keeps track of all request metrics          |
-|nirn_proxy_open_connections         | none                                   | Gauge for open client connections with the proxy           |
+|nirn_proxy_open_connections         | route, method                          | Gauge for open client connections with the proxy           |
 |nirn_proxy_requests_routed_sent     | none                                   | Counter for requests routed to other nodes                 |
 |nirn_proxy_requests_routed_received | none                                   | Counter for requests received from other nodes             |
 |nirn_proxy_requests_routed_error    | none                                   | Counter for requests routed that failed                    |

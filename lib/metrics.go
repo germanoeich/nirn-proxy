@@ -19,10 +19,10 @@ var (
 		Buckets: 	 []float64{.1, .25, 1, 2.5, 5, 20},
 	}, []string{"method", "status", "route", "clientId"})
 
-	ConnectionsOpen = promauto.NewGauge(prometheus.GaugeOpts{
+	ConnectionsOpen = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name:        "nirn_proxy_open_connections",
 		Help:        "Gauge for client connections currently open with the proxy",
-	})
+	}, []string{"method", "route"})
 
 	RequestsRoutedSent = promauto.NewCounter(prometheus.CounterOpts{
 		Name:		"nirn_proxy_requests_routed_sent",

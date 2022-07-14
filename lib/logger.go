@@ -19,9 +19,11 @@ func (h *GlobalHook) Fire(e *logrus.Entry) error {
 	if e.Data["path"] != nil {
 		e.Data["path"] = loggerHookRegex.ReplaceAllString(e.Data["path"].(string), "$1:token")
 	}
+	if logrus.ErrorLevel >= e.Level {
+		ErrorCounter.Inc()
+	}
 	return nil
 }
-
 
 var logger *logrus.Logger
 

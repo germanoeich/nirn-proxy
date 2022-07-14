@@ -43,7 +43,7 @@ func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
 			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          100,
+			MaxIdleConns:          1000,
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
@@ -206,11 +206,11 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 
 func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
 	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com" + path + "?" + query, body)
-	discordReq.Header = header
 	if err != nil {
 		return nil, err
 	}
 
+	discordReq.Header = header
 	startTime := time.Now()
 	discordResp, err := client.Do(discordReq)
 
@@ -231,6 +231,8 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 				status = "429 Shared"
 			}
 		}
+		
+
 		RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": identifier.(string)}).Observe(elapsed)
 	}
 	return discordResp, err

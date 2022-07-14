@@ -32,6 +32,8 @@ type QueueManager struct {
 	clusterGlobalRateLimiter *ClusterGlobalRateLimiter
 	orderedClusterMembers []string
 	nameToAddressMap map[string]string
+	// -1 means no abort
+	abortTime int
 	localNodeName string
 	localNodeIP              string
 	localNodeProxyListenAddr string
@@ -41,7 +43,7 @@ func onEvictLruItem(key interface{}, value interface{}) {
 	go value.(*RequestQueue).destroy()
 }
 
-func NewQueueManager(bufferSize int, maxBearerLruSize int) *QueueManager {
+func NewQueueManager(bufferSize int, maxBearerLruSize int, abortTime int) *QueueManager {
 	bearerMap, err := lru.NewWithEvict(maxBearerLruSize, onEvictLruItem)
 
 	if err != nil {
@@ -52,6 +54,7 @@ func NewQueueManager(bufferSize int, maxBearerLruSize int) *QueueManager {
 		queues: make(map[string]*RequestQueue),
 		bearerQueues: bearerMap,
 		bufferSize: bufferSize,
+		abortTime: abortTime,
 		cluster: nil,
 		clusterGlobalRateLimiter: NewClusterGlobalRateLimiter(),
 	}
@@ -130,6 +133,10 @@ func (m *QueueManager) calculateRoute(pathHash uint64) string {
 
 	members := m.orderedClusterMembers
 	count := uint64(len(members))
+
+	if count == 0 {
+		return ""
+	}
 
 	chosenIndex := pathHash % count
 	addr := m.nameToAddressMap[members[chosenIndex]]
@@ -232,13 +239,15 @@ func (m *QueueManager) getOrCreateBearerQueue(token string) (*RequestQueue, erro
 }
 
 func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http.Request) {
-	ConnectionsOpen.Inc()
-	defer ConnectionsOpen.Dec()
+	reqStart := time.Now()
+	metricsPath := GetMetricsPath(req.URL.Path)
+	ConnectionsOpen.With(map[string]string{"route": metricsPath, "method": req.Method}).Inc()
+	defer ConnectionsOpen.With(map[string]string{"route": metricsPath, "method": req.Method}).Dec()
 
 	token := req.Header.Get("Authorization")
 	routingHash, path, queueType := m.GetRequestRoutingInfo(req, token)
 
-	m.fulfillRequest(&resp, req, queueType, path, routingHash, token)
+	m.fulfillRequest(&resp, req, queueType, path, routingHash, token, reqStart)
 }
 
 func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (routingHash uint64, path string, queueType QueueType) {
@@ -254,7 +263,12 @@ func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (r
 	return
 }
 
-func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Request, queueType QueueType, path string, pathHash uint64, token string) {
+func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Request, queueType QueueType, path string, pathHash uint64, token string, reqStart time.Time) {
+	logEntry := logger.WithField("clientIp", req.RemoteAddr)
+	forwdFor := req.Header.Get("X-Forwarded-For")
+	if forwdFor != "" {
+		logEntry = logEntry.WithField("forwardedFor", forwdFor)
+	}
 	routeTo := m.calculateRoute(pathHash)
 
 	routeToHeader := req.Header.Get("nirn-routed-to")
@@ -278,11 +292,11 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 			(*resp).WriteHeader(500)
 			(*resp).Write([]byte(err.Error()))
 			ErrorCounter.Inc()
-			logger.WithFields(logrus.Fields{"function": "getOrCreateQueue", "queueType": queueType}).Error(err)
+			logEntry.WithFields(logrus.Fields{"function": "getOrCreateQueue", "queueType": queueType}).Error(err)
 			return
 		}
 
-		if q.identifier != "NoAuth" && m.cluster != nil {
+		if q.identifier != "NoAuth" {
 			var botHash uint64 = 0
 			if q.user != nil {
 				botHash = HashCRC64(q.user.Id)
@@ -296,18 +310,18 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 			} else {
 				err = m.clusterGlobalRateLimiter.FireGlobalRequest(req.Context(), globalRouteTo, botHash, botLimit)
 				if err != nil {
-					logger.WithFields(logrus.Fields{"function": "FireGlobalRequest"}).Error(err)
+					logEntry.WithField("function", "FireGlobalRequest").Error(err)
 					ErrorCounter.Inc()
 					Generate429(resp)
 					return
 				}
 			}
 		}
-		err = q.Queue(req, resp, path, pathHash)
+		err = q.Queue(req, resp, path, pathHash, m.abortTime)
 		if err != nil {
-			log := logger.WithFields(logrus.Fields{"function": "Queue"})
-			if errors.Is(err, context.DeadlineExceeded) {
-				log.Warn(err)
+			log := logEntry.WithField("function", "Queue")
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				log.WithField("waitedFor", time.Since(reqStart)).Warn(err)
 			} else {
 				log.Error(err)
 			}
@@ -318,17 +332,18 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 		if err == nil {
 			err = CopyResponseToResponseWriter(res, resp)
 			if err != nil {
-				logger.WithFields(logrus.Fields{"function": "CopyResponseToResponseWriter"}).Error(err)
+				logEntry.WithField("function", "CopyResponseToResponseWriter").Error(err)
 			}
 		} else {
-			logger.WithFields(logrus.Fields{"function": "routeRequest"}).Error(err)
+			logEntry = logEntry.WithField("function", "routeRequest")
+			if !errors.Is(err, context.Canceled) {
+				logEntry.Error(err)
+			} else {
+				logEntry.Warn(err)
+			}
+			// if it's a context canceled on the client it won't get the 429 anyway, if it's within the cluster we should retry
 			Generate429(resp)
 		}
-	}
-
-	if err != nil {
-		ErrorCounter.Inc()
-		return
 	}
 }
 
