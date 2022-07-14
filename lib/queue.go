@@ -15,18 +15,16 @@ import (
 )
 
 type QueueItem struct {
-	Req *http.Request
-	Res *http.ResponseWriter
+	Req      *http.Request
+	Res      *http.ResponseWriter
 	doneChan chan *http.Response
-	errChan chan error
+	errChan  chan error
 	// -1 means no abort
 	abortTime int
 }
 
 type QueueChannel struct {
-	sync.Mutex
-	ch chan *QueueItem
-	waitingUntil time.Time
+	ch       chan *QueueItem
 	lastUsed time.Time
 }
 
@@ -34,18 +32,17 @@ type RequestQueue struct {
 	sync.RWMutex
 	globalLockedUntil *int64
 	// bucket path hash as key
-	queues map[uint64]*QueueChannel
-	processor func(ctx context.Context, item *QueueItem) (*http.Response, error)
+	queues       map[uint64]*QueueChannel
+	processor    func(ctx context.Context, item *QueueItem) (*http.Response, error)
 	globalBucket leakybucket.Bucket
 	// bufferSize Defines the size of the request channel buffer for each bucket
-	bufferSize int
-	user *BotUserResponse
-	identifier string
+	bufferSize     int
+	user           *BotUserResponse
+	identifier     string
 	isTokenInvalid *int64
-	botLimit uint
-	queueType QueueType
+	botLimit       uint
+	queueType      QueueType
 }
-
 
 func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http.Response, error), token string, bufferSize int) (*RequestQueue, error) {
 	queueType := NoAuth
@@ -62,7 +59,7 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 
 	limit, err := GetBotGlobalLimit(token, user)
 	memStorage := memory.New()
-	globalBucket, _ := memStorage.Create("global", limit, 1 * time.Second)
+	globalBucket, _ := memStorage.Create("global", limit, 1*time.Second)
 	if err != nil {
 		if strings.HasPrefix(err.Error(), "invalid token") {
 			// Return a queue that will only return 401s
@@ -73,11 +70,11 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 				processor:         processor,
 				globalBucket:      globalBucket,
 				globalLockedUntil: new(int64),
-				bufferSize: 	   bufferSize,
-				user: 			   nil,
-				identifier: 	   "InvalidTokenQueue",
+				bufferSize:        bufferSize,
+				user:              nil,
+				identifier:        "InvalidTokenQueue",
 				isTokenInvalid:    invalid,
-				botLimit: limit,
+				botLimit:          limit,
 			}, nil
 		}
 		return nil, err
@@ -98,12 +95,12 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 		processor:         processor,
 		globalBucket:      globalBucket,
 		globalLockedUntil: new(int64),
-		bufferSize: 	   bufferSize,
-		user: 			   user,
-		identifier: 	   identifier,
+		bufferSize:        bufferSize,
+		user:              user,
+		identifier:        identifier,
 		isTokenInvalid:    new(int64),
-		botLimit: 		   limit,
-		queueType: 		   queueType,
+		botLimit:          limit,
+		queueType:         queueType,
 	}
 
 	if queueType != Bearer {
@@ -132,7 +129,7 @@ func (q *RequestQueue) sweep() {
 	logger.Info("Sweep start")
 	sweptEntries := 0
 	for key, val := range q.queues {
-		if time.Since(val.lastUsed) > 10 * time.Minute {
+		if time.Since(val.lastUsed) > 10*time.Minute {
 			close(val.ch)
 			delete(q.queues, key)
 			sweptEntries++
@@ -150,9 +147,6 @@ func (q *RequestQueue) tickSweep() {
 }
 
 func safeSend(queue *QueueChannel, value *QueueItem) {
-	queue.Lock()
-	defer queue.Unlock() // Will be called after the deferred function below
-
 	defer func() {
 		if recover() != nil {
 			value.errChan <- errors.New("failed to send due to closed channel, sending 429 for client to retry")
@@ -166,7 +160,7 @@ func safeSend(queue *QueueChannel, value *QueueItem) {
 func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash uint64, defaultAbort int) error {
 	logger.WithFields(logrus.Fields{
 		"bucket": path,
-		"path": req.URL.Path,
+		"path":   req.URL.Path,
 		"method": req.Method,
 	}).Trace("Inbound request")
 
@@ -184,16 +178,11 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 	}
 
 	ch := q.getQueueChannel(path, pathHash)
-	// waitingUntil may be a past time, making time.Until() negative. This is still handled like
-	// any time, assuming abort is positive.
-	if abort != -1 && abort < int(time.Until(ch.waitingUntil).Seconds()) {
-		return generate408Aborted(res)
-	}
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
 
-	safeSend(ch, &QueueItem{ req, res, doneChan, errChan, abort })
+	safeSend(ch, &QueueItem{req, res, doneChan, errChan, abort})
 
 	select {
 	case <-doneChan:
@@ -210,8 +199,7 @@ func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChann
 	ch, ok := q.queues[pathHash]
 	if !ok {
 		ch = &QueueChannel{
-			ch: make(chan *QueueItem, q.bufferSize),
-			waitingUntil: t,
+			ch:       make(chan *QueueItem, q.bufferSize),
 			lastUsed: t,
 		}
 		q.queues[pathHash] = ch
@@ -249,7 +237,7 @@ func parseHeaders(headers *http.Header, preferRetryAfter bool) (int64, int64, ti
 		}
 
 		// Convert to MS instead of seconds to preserve decimal precision
-		reset = time.Duration(int(resetParsed * 1000)) * time.Millisecond
+		reset = time.Duration(int(resetParsed*1000)) * time.Millisecond
 	}
 
 	if isGlobal {
@@ -335,7 +323,6 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			continue
 		}
 
-
 		if atomic.LoadInt64(q.isTokenInvalid) > 0 {
 			return401(item)
 			continue
@@ -356,7 +343,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			sw := atomic.CompareAndSwapInt64(q.globalLockedUntil, 0, time.Now().Add(resetAfter).UnixNano())
 			if sw {
 				logger.WithFields(logrus.Fields{
-					"until": time.Now().Add(resetAfter),
+					"until":      time.Now().Add(resetAfter),
 					"resetAfter": resetAfter,
 				}).Warn("Global reached, locking")
 			}
@@ -368,19 +355,19 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		}
 		item.doneChan <- resp
 
-		if resp.StatusCode == 429 && scope != "shared"{
+		if resp.StatusCode == 429 && scope != "shared" {
 			logger.WithFields(logrus.Fields{
-				"prevRemaining": prevRem,
+				"prevRemaining":  prevRem,
 				"prevResetAfter": prevReset,
-				"remaining": remaining,
-				"resetAfter": resetAfter,
-				"bucket": path,
-				"route": item.Req.URL.String(),
-				"method": item.Req.Method,
-				"isGlobal": isGlobal,
-				"pathHash": pathHash,
+				"remaining":      remaining,
+				"resetAfter":     resetAfter,
+				"bucket":         path,
+				"route":          item.Req.URL.String(),
+				"method":         item.Req.Method,
+				"isGlobal":       isGlobal,
+				"pathHash":       pathHash,
 				// TODO: Remove this when 429s are not a problem anymore
-				"discordBucket": resp.Header.Get("x-ratelimit-bucket"),
+				"discordBucket":  resp.Header.Get("x-ratelimit-bucket"),
 				"ratelimitScope": resp.Header.Get("x-ratelimit-scope"),
 			}).Warn("Unexpected 429")
 		}
@@ -388,7 +375,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		if resp.StatusCode == 404 && strings.HasPrefix(path, "/webhooks/") && !isInteraction(item.Req.URL.String()) {
 			logger.WithFields(logrus.Fields{
 				"bucket": path,
-				"route": item.Req.URL.String(),
+				"route":  item.Req.URL.String(),
 				"method": item.Req.Method,
 			}).Info("Setting fail fast 404 for webhook")
 			ret404 = true
@@ -397,11 +384,11 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		if resp.StatusCode == 401 && !isInteraction(item.Req.URL.String()) && q.queueType != NoAuth {
 			// Permanently lock this queue
 			logger.WithFields(logrus.Fields{
-				"bucket": path,
-				"route": item.Req.URL.String(),
-				"method": item.Req.Method,
+				"bucket":     path,
+				"route":      item.Req.URL.String(),
+				"method":     item.Req.Method,
 				"identifier": q.identifier,
-				"status": resp.StatusCode,
+				"status":     resp.StatusCode,
 			}).Error("Received 401 during normal operation, assuming token is invalidated, locking bucket permanently")
 
 			if EnvGet("DISABLE_401_LOCK", "false") != "true" {
@@ -416,35 +403,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		}
 
 		if remaining == 0 || resp.StatusCode == 429 {
-			// Before sleeping for the ratelimit, check if there are any requests that would like to be aborted
-			ch.Lock()
-			ch.waitingUntil = time.Now().Add(resetAfter)
-			duration := time.Until(ch.waitingUntil)
-			seconds := int(duration.Seconds())
-
-			length := len(ch.ch)
-			for i := 0; i < length; i++ {
-				abortItem := <-ch.ch
-
-				if abortItem.abortTime == -1 {
-					ch.ch <- abortItem
-					continue
-				}
-
-				abortItem.abortTime -= seconds
-				if abortItem.abortTime < 0 {
-					err = generate408Aborted(abortItem.Res)
-					if err != nil {
-						abortItem.errChan <- err
-					} else {
-						abortItem.doneChan <- nil
-					}
-				} else {
-					ch.ch <- abortItem
-				}
-			}
-			ch.Unlock()
-
+			duration := time.Until(time.Now().Add(resetAfter))
 			time.Sleep(duration)
 		}
 		prevRem, prevReset = remaining, resetAfter
