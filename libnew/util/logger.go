@@ -24,6 +24,7 @@ func (h *GlobalHook) Fire(e *logrus.Entry) error {
 
 func GetLogger(subsystem string) *logrus.Entry {
 	var logger = logrus.New()
+	logger.AddHook(&GlobalHook{})
 
 	logLevel := EnvGet("LOG_LEVEL", "info")
 	lvl, err := logrus.ParseLevel(logLevel)
