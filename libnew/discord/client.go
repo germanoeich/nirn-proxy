@@ -8,7 +8,6 @@ import (
 	"github.com/germanoeich/nirn-proxy/libnew/bucket"
 	"github.com/germanoeich/nirn-proxy/libnew/config"
 	"github.com/germanoeich/nirn-proxy/libnew/metrics"
-	"github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
 	"math"
@@ -20,7 +19,7 @@ import (
 )
 
 type Client struct {
-	client *http.Client
+	client         *http.Client
 	contextTimeout time.Duration
 }
 
@@ -48,9 +47,9 @@ func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
 		}
 
 		dialer := &net.Dialer{
-			LocalAddr:     addr,
-			Timeout:       30 * time.Second,
-			KeepAlive:     30 * time.Second,
+			LocalAddr: addr,
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
 		}
 
 		dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -78,10 +77,10 @@ func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
 }
 
 func configureDiscordHTTPClient(config ClientConfig) *http.Client {
-	transport := createTransport(config.ip, config.disableHttp2)
+	transport := createTransport(config.Ip, config.DisableHttp2)
 	client := &http.Client{
 		Transport: transport,
-		Timeout: 90 * time.Second,
+		Timeout:   90 * time.Second,
 	}
 
 	return client
@@ -109,7 +108,7 @@ func (c *Client) GetBotGlobalLimit(token string, user *BotUserResponse) (uint, e
 		return 50, nil
 	}
 
-	bot, err := doDiscordReq(context.Background(), "/api/v9/gateway/bot", "GET", nil, map[string][]string{"Authorization": {token}}, "")
+	bot, err := c.Do(context.Background(), "/api/v9/gateway/bot", "GET", nil, map[string][]string{"Authorization": {token}}, "")
 
 	if err != nil {
 		return 0, err
@@ -151,7 +150,7 @@ func (c *Client) GetBotUser(token string) (*BotUserResponse, error) {
 		return nil, errors.New("no token provided")
 	}
 
-	bot, err := doDiscordReq(context.Background(), "/api/v9/users/@me", "GET", nil, map[string][]string{"Authorization": {token}}, "")
+	bot, err := c.Do(context.Background(), "/api/v9/users/@me", "GET", nil, map[string][]string{"Authorization": {token}}, "")
 
 	if err != nil {
 		return nil, err
@@ -177,7 +176,7 @@ func (c *Client) GetBotUser(token string) (*BotUserResponse, error) {
 }
 
 func (c *Client) Do(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
-	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com" + path + "?" + query, body)
+	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com"+path+"?"+query, body)
 	discordReq.Header = header
 	if err != nil {
 		return nil, err
@@ -208,37 +207,52 @@ func (c *Client) Do(ctx context.Context, path string, method string, body io.Rea
 	return discordResp, err
 }
 
-func ProcessRequest(ctx context.Context, item *QueueItem) (*http.Response, error) {
-	req := item.Req
-	res := *item.Res
-
-	ctx, cancel := context.WithTimeout(ctx, contextTimeout)
-	defer cancel()
-	discordResp, err := doDiscordReq(ctx, req.URL.Path, req.Method, req.Body, req.Header.Clone(), req.URL.RawQuery)
-
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			res.WriteHeader(408)
-		} else {
-			res.WriteHeader(500)
-		}
-		_, _ = res.Write([]byte(err.Error()))
-		return nil, err
-	}
-
-	logger.WithFields(logrus.Fields{
-		"method": req.Method,
-		"path":   req.URL.String(),
-		"status": discordResp.Status,
-		// TODO: Remove this when 429s are not a problem anymore
-		"discordBucket": discordResp.Header.Get("x-ratelimit-bucket"),
-	}).Debug("Discord request")
-
-	err = CopyResponseToResponseWriter(discordResp, item.Res)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return discordResp, nil
+func Generate429(resp *http.ResponseWriter) {
+	writer := *resp
+	writer.Header().Set("generated-by-proxy", "true")
+	writer.Header().Set("x-ratelimit-scope", "user")
+	writer.Header().Set("x-ratelimit-limit", "1")
+	writer.Header().Set("x-ratelimit-remaining", "0")
+	writer.Header().Set("x-ratelimit-reset", strconv.FormatInt(time.Now().Add(1*time.Second).Unix(), 10))
+	writer.Header().Set("x-ratelimit-after", "1")
+	writer.Header().Set("retry-after", "1")
+	writer.Header().Set("content-type", "application/json")
+	writer.WriteHeader(429)
+	writer.Write([]byte("{\n\t\"global\": false,\n\t\"message\": \"You are being rate limited.\",\n\t\"retry_after\": 1\n}"))
 }
+
+//
+//func ProcessRequest(ctx context.Context, item *QueueItem) (*http.Response, error) {
+//	req := item.Req
+//	res := *item.Res
+//
+//	ctx, cancel := context.WithTimeout(ctx, contextTimeout)
+//	defer cancel()
+//	discordResp, err := doDiscordReq(ctx, req.URL.Path, req.Method, req.Body, req.Header.Clone(), req.URL.RawQuery)
+//
+//	if err != nil {
+//		if ctx.Err() == context.DeadlineExceeded {
+//			res.WriteHeader(408)
+//		} else {
+//			res.WriteHeader(500)
+//		}
+//		_, _ = res.Write([]byte(err.Error()))
+//		return nil, err
+//	}
+//
+//	logger.WithFields(logrus.Fields{
+//		"method": req.Method,
+//		"path":   req.URL.String(),
+//		"status": discordResp.Status,
+//		// TODO: Remove this when 429s are not a problem anymore
+//		"discordBucket": discordResp.Header.Get("x-ratelimit-bucket"),
+//	}).Debug("Discord request")
+//
+//	err = CopyResponseToResponseWriter(discordResp, item.Res)
+//
+//	if err != nil {
+//		return nil, err
+//	}
+//
+//	return discordResp, nil
+//}

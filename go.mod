@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/Clever/leakybucket v1.2.0
-	github.com/ef-ds/deque v1.0.4
+	github.com/edwingeng/deque v1.0.1
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/hashicorp/memberlist v0.3.1
 	github.com/joho/godotenv v1.4.0
@@ -18,6 +18,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.1.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/edwingeng/deque/v2 v2.0.1 // indirect
 	github.com/golang/protobuf v1.4.3 // indirect
 	github.com/google/btree v0.0.0-20180813153112-4030bb1f1f0c // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect

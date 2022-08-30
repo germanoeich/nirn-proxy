@@ -87,6 +87,7 @@ func (h *HttpHandler) CreateMux() *http.ServeMux {
 	mux.HandleFunc("/nirn/global", h.globalRateLimiter.HandleGlobalRequest)
 	mux.HandleFunc("/nirn/healthz", func(writer http.ResponseWriter, request *http.Request) {
 		writer.WriteHeader(200)
+		writer.Header()
 	})
 	return mux
 }

@@ -3,6 +3,7 @@ package libnew
 import (
 	"github.com/germanoeich/nirn-proxy/libnew/clustering"
 	"github.com/germanoeich/nirn-proxy/libnew/config"
+	"github.com/germanoeich/nirn-proxy/libnew/util"
 	"github.com/hashicorp/memberlist"
 	"github.com/sirupsen/logrus"
 	"net"
@@ -11,6 +12,13 @@ import (
 	"sync"
 	"time"
 )
+
+// Some routes that have @me on the path don't really spread out through the cluster, causing issues
+// and exacerbating tail latency hits from Discord. Only routes with no ratelimit headers should be put here
+var pathsToRouteLocally = map[uint64]struct{}{
+	util.HashCRC64("/users/@me/channels"): {},
+	util.HashCRC64("/users/@me"):          {},
+}
 
 type ClusterManager struct {
 	sync.RWMutex
@@ -116,6 +124,10 @@ func (m *ClusterManager) CalculateRoute(pathHash uint64) string {
 	}
 
 	if pathHash == 0 {
+		return ""
+	}
+
+	if _, ok := pathsToRouteLocally[pathHash]; ok {
 		return ""
 	}
 
