@@ -207,6 +207,56 @@ func (c *Client) Do(ctx context.Context, path string, method string, body io.Rea
 	return discordResp, err
 }
 
+func (c *Client) ParseHeaders(headers *http.Header, preferRetryAfter bool) (int64, int64, time.Duration, bool, error) {
+	if headers == nil {
+		return 0, 0, 0, false, errors.New("null headers")
+	}
+
+	limit := headers.Get("x-ratelimit-limit")
+	remaining := headers.Get("x-ratelimit-remaining")
+	resetAfter := headers.Get("x-ratelimit-reset-after")
+	retryAfter := headers.Get("retry-after")
+	if resetAfter == "" || (preferRetryAfter && retryAfter != "") {
+		// Globals return no x-ratelimit-reset-after headers, shared ratelimits have a wrong reset-after
+		// this is the best option without parsing the body
+		resetAfter = headers.Get("retry-after")
+	}
+	isGlobal := headers.Get("x-ratelimit-global") == "true"
+
+	var resetParsed float64
+	var reset time.Duration = 0
+	var err error
+	if resetAfter != "" {
+		resetParsed, err = strconv.ParseFloat(resetAfter, 64)
+		if err != nil {
+			return 0, 0, 0, false, err
+		}
+
+		// Convert to MS instead of seconds to preserve decimal precision
+		reset = time.Duration(int(resetParsed*1000)) * time.Millisecond
+	}
+
+	if isGlobal {
+		return 0, 0, reset, isGlobal, nil
+	}
+
+	if limit == "" {
+		return 0, 0, reset, false, nil
+	}
+
+	limitParsed, err := strconv.ParseInt(limit, 10, 32)
+	if err != nil {
+		return 0, 0, 0, false, err
+	}
+
+	remainingParsed, err := strconv.ParseInt(remaining, 10, 32)
+	if err != nil {
+		return 0, 0, 0, false, err
+	}
+
+	return limitParsed, remainingParsed, reset, isGlobal, nil
+}
+
 func Generate429(resp *http.ResponseWriter) {
 	writer := *resp
 	writer.Header().Set("generated-by-proxy", "true")

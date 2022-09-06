@@ -17,12 +17,13 @@ var QueueItemPool = sync.Pool{
 }
 
 type Processor interface {
-	Do(ctx context.Context, req *http.Request) (*http.Response, error)
+	ProcessRequest(ctx context.Context, req *http.Request) (*http.Response, error)
 }
 
 type QueueItem struct {
 	Req      *http.Request
 	DoneChan chan QueueItemResult
+	Context  context.Context
 }
 
 type QueueItemResult struct {
@@ -31,21 +32,26 @@ type QueueItemResult struct {
 }
 
 type RequestQueue struct {
-	sync.RWMutex
+	sync.Mutex
+	LastUsed  time.Time
 	deque     *deque.Deque[*QueueItem]
 	ticker    *time.Ticker
 	ctx       context.Context
+	cancel    context.CancelFunc
 	processor Processor
 }
 
 func NewRequestQueue(ctx context.Context, processor Processor) *RequestQueue {
+	newCtx, cancel := context.WithCancel(ctx)
 	q := &RequestQueue{
 		deque: deque.NewDeque[*QueueItem](),
 		// 1 ms may seem like a lot but this isn't actually the delay between processing individual requests,
 		// its just a way to keep the bucket from stalling. Think of this as "Sleep for 1ms if there is no work to do"
 		ticker:    time.NewTicker(1 * time.Millisecond),
-		ctx:       ctx,
+		ctx:       newCtx,
 		processor: processor,
+		cancel:    cancel,
+		LastUsed:  time.Now(),
 	}
 
 	go func() {
@@ -65,12 +71,17 @@ func NewRequestQueue(ctx context.Context, processor Processor) *RequestQueue {
 	return q
 }
 
-func (r *RequestQueue) Queue(req *http.Request) chan QueueItemResult {
+func (r *RequestQueue) Destroy() {
+	r.cancel()
+}
+
+func (r *RequestQueue) Queue(ctx context.Context, req *http.Request) chan QueueItemResult {
 	r.Lock()
 	defer r.Unlock()
 
 	item := QueueItemPool.Get().(*QueueItem)
 	item.Req = req
+	item.Context = ctx
 	item.DoneChan = make(chan QueueItemResult)
 	r.deque.PushBack(item)
 
@@ -78,19 +89,21 @@ func (r *RequestQueue) Queue(req *http.Request) chan QueueItemResult {
 }
 
 func (r *RequestQueue) safeTryDequeue() (*QueueItem, bool) {
-	r.RLock()
-	defer r.RUnlock()
+	r.Lock()
+	defer r.Unlock()
 	return r.deque.TryDequeue()
 }
 
 func (r *RequestQueue) Process() {
 	for v, ok := r.safeTryDequeue(); ok; v, ok = r.safeTryDequeue() {
+		r.LastUsed = time.Now()
 		// process
-		res, err := r.processor.Do(r.ctx, v.Req)
+		res, err := r.processor.ProcessRequest(v.Context, v.Req)
 		v.DoneChan <- QueueItemResult{Res: res, Err: err}
 		// cleanup
 		v.Req = nil
 		v.DoneChan = nil
+		v.Context = nil
 		QueueItemPool.Put(v)
 	}
 }
