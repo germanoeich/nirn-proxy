@@ -16,6 +16,7 @@ import (
 )
 
 var logger = logrus.New()
+
 // token : queue map
 var bufferSize = 50
 
@@ -64,7 +65,7 @@ func initCluster(proxyPort string, manager *lib.QueueManager) *memberlist.Member
 	return lib.InitMemberList(members, port, proxyPort, manager)
 }
 
-func main()  {
+func main() {
 	outboundIp := os.Getenv("OUTBOUND_IP")
 
 	timeout := lib.EnvGetInt("REQUEST_TIMEOUT", 5000)
@@ -73,7 +74,7 @@ func main()  {
 
 	globalOverrides := lib.EnvGet("BOT_RATELIMIT_OVERRIDES", "")
 
-	lib.ConfigureDiscordHTTPClient(outboundIp, time.Duration(timeout) * time.Millisecond, disableHttp2, globalOverrides)
+	lib.ConfigureDiscordHTTPClient(outboundIp, time.Duration(timeout)*time.Millisecond, disableHttp2, globalOverrides)
 
 	port := lib.EnvGet("PORT", "8080")
 	bindIp := lib.EnvGet("BIND_IP", "0.0.0.0")
@@ -82,9 +83,8 @@ func main()  {
 
 	bufferSize = lib.EnvGetInt("BUFFER_SIZE", 50)
 	maxBearerLruSize := lib.EnvGetInt("MAX_BEARER_COUNT", 1024)
-	abort := lib.EnvGetInt("RATELIMIT_ABORT_AFTER", -1)
 
-	manager := lib.NewQueueManager(bufferSize, maxBearerLruSize, abort)
+	manager := lib.NewQueueManager(bufferSize, maxBearerLruSize)
 
 	mux := manager.CreateMux()
 
@@ -105,7 +105,6 @@ func main()  {
 		go lib.StartMetrics(bindIp + ":" + port)
 	}
 
-
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
@@ -118,7 +117,7 @@ func main()  {
 	logger.Info("Started proxy on " + bindIp + ":" + port)
 
 	// Wait for the http server to ready before joining the cluster
-	<- time.After(1 * time.Second)
+	<-time.After(1 * time.Second)
 	initCluster(port, manager)
 
 	<-done

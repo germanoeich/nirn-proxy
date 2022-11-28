@@ -19,8 +19,6 @@ type QueueItem struct {
 	Res      *http.ResponseWriter
 	doneChan chan *http.Response
 	errChan  chan error
-	// -1 means no abort
-	abortTime int
 }
 
 type QueueChannel struct {
@@ -157,32 +155,19 @@ func safeSend(queue *QueueChannel, value *QueueItem) {
 	queue.ch <- value
 }
 
-func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash uint64, defaultAbort int) error {
+func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash uint64) error {
 	logger.WithFields(logrus.Fields{
 		"bucket": path,
 		"path":   req.URL.Path,
 		"method": req.Method,
 	}).Trace("Inbound request")
 
-	var abort int
-	abortHeader := req.Header.Get("X-RateLimit-Abort-After")
-	if abortHeader != "" {
-		valParsed, err := strconv.ParseInt(abortHeader, 10, 64)
-		if err != nil {
-			return err
-		}
-
-		abort = int(valParsed)
-	} else {
-		abort = defaultAbort
-	}
-
 	ch := q.getQueueChannel(path, pathHash)
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
 
-	safeSend(ch, &QueueItem{req, res, doneChan, errChan, abort})
+	safeSend(ch, &QueueItem{req, res, doneChan, errChan})
 
 	select {
 	case <-doneChan:
@@ -284,16 +269,6 @@ func return401(item *QueueItem) {
 		return
 	}
 	item.doneChan <- nil
-}
-
-func generate408Aborted(resp *http.ResponseWriter) error {
-	res := *resp
-
-	res.Header().Set("Generated-By-Proxy", "true")
-	res.WriteHeader(408)
-
-	_, err := res.Write([]byte("{\n  \"message\": \"Request aborted because of ratelimits\",\n  \"code\": 0\n}"))
-	return err
 }
 
 func isInteraction(url string) bool {

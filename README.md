@@ -1,5 +1,7 @@
 # Nirn-proxy
-Nirn-proxy is a highly available, transparent & dynamic HTTP proxy that handles Discord ratelimits for you and exports meaningful prometheus metrics. It is considered beta software but is being used in production by [Dyno](https://dyno.gg) on the scale of hundreds of requests per second.
+Nirn-proxy is a highly available, transparent & dynamic HTTP proxy that 
+handles Discord ratelimits for you and exports meaningful prometheus metrics.
+This project is at the heart of [Dyno](https://dyno.gg), handling several hundreds of requests per sec across hundreds of bots all while keeping 429s at ~100 per hour.
 
 It is designed to be minimally invasive and exploits common library patterns to make the adoption as simple as a URL change.
 
@@ -7,18 +9,18 @@ It is designed to be minimally invasive and exploits common library patterns to 
 
 - Highly available, horizontally scalable
 - Transparent ratelimit handling, per-route and global
-- Multi-bot support with automatic detection for elevated REST limits (big bot sharding)
 - Works with any API version (Also supports using two or more versions for the same bot)
 - Small resource footprint
 - Works with webhooks
 - Works with Bearer tokens
+- Supports an unlimited number of clients (Bots and Bearer)
 - Prometheus metrics exported out of the box
 - No hardcoded routes, therefore no need of updates for new routes introduced by Discord
 
 ### Usage
 Binaries can be found [here](https://github.com/germanoeich/nirn-proxy/releases). Docker images can be found [here](https://github.com/germanoeich/nirn-proxy/pkgs/container/nirn-proxy)
 
-The proxy sits between the client and discord. Essentially, instead of pointing to discord.com, you point to whatever IP and port the proxy is running on, so discord.com/api/v9/gateway becomes 10.0.0.1:8080/api/v9/gateway. This can be achieved in many ways, some suggestions are host remapping on the OS level, DNS overrides or changes to the library code. Please note that the proxy currently does not support SSL.
+The proxy sits between the client and discord. Instead of pointing to discord.com, you point to whatever IP and port the proxy is running on, so discord.com/api/v9/gateway becomes 10.0.0.1:8080/api/v9/gateway. This can be achieved in many ways, some suggestions are host remapping on the OS level, DNS overrides or changes to the library code. Please note that the proxy currently does not support SSL.
 
 Configuration options are
 
@@ -39,7 +41,6 @@ Configuration options are
 | MAX_BEARER_COUNT| number                                        | 1024                    |
 | DISABLE_HTTP_2  | bool                                          | true                    |
 | BOT_RATELIMIT_OVERRIDES | string list (comma separated)          | ""                      |
-| RATELIMIT_ABORT_AFTER | number                                  | -1                      |
 
 Information on each config var can be found [here](https://github.com/germanoeich/nirn-proxy/blob/main/CONFIG.md)
 
@@ -47,21 +48,11 @@ Information on each config var can be found [here](https://github.com/germanoeic
 
 ### Behaviour
 
-The proxy listens on all routes and relays them to Discord, while keeping track of ratelimit buckets and holding requests if there are no tokens to spare. The proxy fires requests sequentially for each bucket and ordering is preserved. The proxy does not modify the requests in any way so any library compatible with Discords API can be pointed at the proxy and it will not break the library, even with the libraries own ratelimiting intact.
+The proxy listens on all routes and relays them to Discord, while keeping track of ratelimit buckets and making requests wait if there are no tokens to spare. The proxy fires requests sequentially for each bucket and ordering is preserved. The proxy does not modify the requests in any way so any library compatible with Discords API can be pointed at the proxy and it will not break the library, even with the libraries own ratelimiting intact.
 
 When using the proxy, it is safe to remove the ratelimiting logic from clients and fire requests instantly, however, the proxy does not handle retries. If for some reason (i.e shared ratelimits, internal discord ratelimits, etc) the proxy encounters a 429, it will return that to the client. It is safe to immediately retry requests that return 429 or even setup retry logic elsewhere (like in a load balancer or service mesh).
 
 The proxy also guards against known scenarios that might cause a cloudflare ban, like too many webhook 404s or too many 401s.
-
-#### Ratelimit aborting
-
-The proxy allows requests to specify an `X-RateLimit-Abort-After` header (defaulted to the `RATELIMIT_ABORT_AFTER` variable). This sets the amount of seconds to wait in case of ratelimits before the proxy aborts the request and returns a 408 response.
-
-The point of ratelimit aborting is being able to send a request and set a maximum amount of time the request can be ratelimited. Certain enpoints have very high ratelimits and this configuration allows you to send the request and tell the proxy to abort it in case it needs to wait for ratelimits. Compared to timeouts, this is a much more reliable approach in the event of instabilities of the API.
-
-The special (and default) value `-1` indicates a request which should not abort. Set the value to `0` to abort if any ratelimiting will be necessary. If the value is higher than the allowed window of the ratelimit - for example an abort time of `8` for a ratelimit of `5 / 5s` - the value will be subtracted each time the proxy waits for the ratelimit.
-
-The proxy does not pre-emptively calculate how long a request will need to wait for ratelimits, therefore requests may not always immediately abort. In the above example with 8 seconds of abort time, the request will be aborted after roughly 5 seconds when the proxy fills the second window of the ratelimit and the request would have to wait for 10 seconds in total had it not been aborted.
 
 ### Proxy specific responses
 
@@ -72,6 +63,8 @@ Requests may also return a 408 status code in the event that they were aborted b
 ### Limitations
 
 The ratelimiting only works with `X-RateLimit-Precision` set to `seconds`. If you are using Discord API v8+, that is the only possible behaviour. For users on v6 or v7, please refer to your library docs for information on which precision it uses and how to change it to seconds.
+
+The proxy tries its best to detect your REST global limits, but Discord does not expose this information. Be sure to set `BOT_RATELIMIT_OVERRIDES` for any clients with elevated limits.
 
 ### High availability
 
