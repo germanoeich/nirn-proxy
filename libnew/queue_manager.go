@@ -2,6 +2,7 @@ package libnew
 
 import (
 	"context"
+	"github.com/germanoeich/nirn-proxy/libnew/config"
 	"github.com/germanoeich/nirn-proxy/libnew/discord"
 	"github.com/germanoeich/nirn-proxy/libnew/enums"
 	"github.com/sirupsen/logrus"
@@ -29,8 +30,15 @@ type QueueManager struct {
 	discordClient discord.Client
 }
 
-func NewQueueManager(ctx context.Context, token string, discordClient discord.Client) (*QueueManager, error) {
+func NewQueueManager(ctx context.Context, token string) (*QueueManager, error) {
 	newCtx, cancel := context.WithCancel(ctx)
+
+	cfg := config.Get()
+	discordClient := discord.NewDiscordClient(discord.ClientConfig{
+		Ip:           cfg.OutboundIP,
+		DisableHttp2: cfg.DisableHTTP2,
+	})
+
 	queueType := enums.NoAuth
 	var user *discord.BotUserResponse
 	var err error

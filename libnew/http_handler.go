@@ -7,24 +7,53 @@ import (
 	"github.com/germanoeich/nirn-proxy/libnew/enums"
 	"github.com/germanoeich/nirn-proxy/libnew/metrics"
 	"github.com/germanoeich/nirn-proxy/libnew/util"
+	lru "github.com/hashicorp/golang-lru"
+	"github.com/im7mortal/kmutex"
 	"github.com/sirupsen/logrus"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
 type HttpHandler struct {
-	globalRateLimiter *GlobalRateLimiter
-	clusterManager    *ClusterManager
-	s                 *http.Server
-	logger            *logrus.Entry
+	globalRateLimiter   *GlobalRateLimiter
+	clusterManager      *ClusterManager
+	s                   *http.Server
+	logger              *logrus.Entry
+	bearerQueues        *lru.Cache
+	botQueues           sync.Map
+	queueCreationKMutex *kmutex.Kmutex
+	cancel              context.CancelFunc
+	ctx                 context.Context
 }
 
-func NewHttpHandler() *HttpHandler {
-	return &HttpHandler{
-		logger:            util.GetLogger("HttpHandler"),
-		globalRateLimiter: NewGlobalRateLimiter(),
+func onEvictLruItem(key interface{}, value interface{}) {
+	go value.(*RequestQueue).Destroy()
+}
+
+func NewHttpHandler(ctx context.Context) *HttpHandler {
+	ctx, cancel := context.WithCancel(ctx)
+	cfg := config.Get()
+	bearerMap, err := lru.NewWithEvict(cfg.MaxBearerCount, onEvictLruItem)
+
+	if err != nil {
+		panic(err)
 	}
+
+	return &HttpHandler{
+		logger:              util.GetLogger("HttpHandler"),
+		globalRateLimiter:   NewGlobalRateLimiter(),
+		bearerQueues:        bearerMap,
+		botQueues:           sync.Map{},
+		queueCreationKMutex: kmutex.New(),
+		ctx:                 ctx,
+		cancel:              cancel,
+	}
+}
+
+func (h *HttpHandler) Destroy() {
+	h.cancel()
 }
 
 // Not included in New due to startup order issues, http server has to start before clustering
@@ -78,7 +107,66 @@ func (h *HttpHandler) DiscordRequestHandler(resp http.ResponseWriter, req *http.
 }
 
 func (h *HttpHandler) RouteRequest(respPtr *http.ResponseWriter, req *http.Request, routingInfo RequestInfo) {
+	route := h.clusterManager.CalculateRoute(routingInfo.routingHash)
+	if route == "" {
+		// Route locally
+		q := h.getOrCreateQueue(routingInfo)
+		if q == nil {
+			(*respPtr).WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		ç
+		q.QueueRequest(respPtr, req, routingInfo)
+	}
+}
 
+func (h *HttpHandler) getOrCreateQueue(routingInfo RequestInfo) *QueueManager {
+	var queue *QueueManager
+	requestQueue := h.getQueue(routingInfo)
+	if requestQueue != nil {
+		return requestQueue
+	}
+
+	h.queueCreationKMutex.Lock(routingInfo.token)
+	defer h.queueCreationKMutex.Unlock(routingInfo.token)
+
+	// Check again if queue was created while waiting for lock
+	requestQueue = h.getQueue(routingInfo)
+	if requestQueue != nil {
+		return requestQueue
+	}
+
+	var err error
+	// Create new queue
+	queue, err = NewQueueManager(h.ctx, routingInfo.token)
+
+	if err != nil {
+		logger.Error(err)
+		return nil
+	}
+
+	if routingInfo.queueType == enums.Bearer {
+		h.bearerQueues.Add(routingInfo.token, queue)
+	} else {
+		h.botQueues.Store(routingInfo.token, queue)
+	}
+
+	return queue
+}
+
+func (h *HttpHandler) getQueue(routingInfo RequestInfo) *QueueManager {
+	if routingInfo.queueType == enums.Bearer {
+		q, ok := h.bearerQueues.Get(routingInfo.token)
+		if ok {
+			return q.(*QueueManager)
+		}
+	} else {
+		q, ok := h.botQueues.Load(routingInfo.routingHash)
+		if ok {
+			return q.(*QueueManager)
+		}
+	}
+	return nil
 }
 
 func (h *HttpHandler) CreateMux() *http.ServeMux {

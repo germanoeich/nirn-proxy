@@ -236,7 +236,7 @@ func (m *QueueManager) getOrCreateBearerQueue(token string) (*RequestQueue, erro
 		q, ok = m.bearerQueues.Get(token)
 		if !ok {
 			var err error
-			q, err = NewRequestQueue(ProcessRequest, token, 5)
+			q, err = NewRequestQueue(ProcessRequest, token, 50)
 
 			if err != nil {
 				return nil, err
