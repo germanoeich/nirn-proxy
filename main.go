@@ -89,11 +89,12 @@ func main() {
 	mux := manager.CreateMux()
 
 	s := &http.Server{
-		Addr:           bindIp + ":" + port,
-		Handler:        mux,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   1 * time.Hour,
-		MaxHeaderBytes: 1 << 20,
+		Addr:              bindIp + ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       10 * time.Second,
+		WriteTimeout:      1 * time.Hour,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	if os.Getenv("ENABLE_PPROF") == "true" {
