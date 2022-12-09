@@ -297,10 +297,15 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 		}
 
 		if err != nil {
-			(*resp).WriteHeader(500)
-			(*resp).Write([]byte(err.Error()))
-			ErrorCounter.Inc()
-			logEntry.WithFields(logrus.Fields{"function": "getOrCreateQueue", "queueType": queueType}).Error(err)
+			if strings.HasPrefix(err.Error(), "429") {
+				Generate429(resp)
+				logEntry.WithFields(logrus.Fields{"function": "getOrCreateQueue", "queueType": queueType}).Warn(err)
+			} else {
+				(*resp).WriteHeader(500)
+				(*resp).Write([]byte(err.Error()))
+				ErrorCounter.Inc()
+				logEntry.WithFields(logrus.Fields{"function": "getOrCreateQueue", "queueType": queueType}).Error(err)
+			}
 			return
 		}
 

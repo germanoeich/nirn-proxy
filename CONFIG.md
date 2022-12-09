@@ -65,6 +65,16 @@ Allows you to define custom global request limits for one or multiple bots. The 
 Format: Command separated list of **user id** and limit combo, separated by `:` and with no spaces at all. Don't use application ids.
 Example: `392827169497284619:100,227115752396685313:80`
 
+
+##### DISABLE_GLOBAL_RATELIMIT_DETECTION
+Disables the optimistic global rest limit detection. This detection uses the /gateway/bot endpoint, which has a low ratelimit and can cause issues with requests being dropped/delayed as cluster size grows.
+
+You probably want to set BOT_RATELIMIT_OVERRIDES if you set this to true.
+
+Default: false
+
+In the future, this will be the only possible behavior.
+
 ## Unstable env vars
 Collection of env vars that may be removed at any time, mainly used for Discord introducing new behaviour on their edge api versions
 

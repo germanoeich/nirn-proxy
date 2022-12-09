@@ -22,14 +22,16 @@ var contextTimeout time.Duration
 
 var globalOverrideMap = make(map[string]uint)
 
+var disableRestLimitDetection = false
+
 type BotGatewayResponse struct {
 	SessionStartLimit map[string]int `json:"session_start_limit"`
 }
 
 type BotUserResponse struct {
-	Id string `json:"id"`
+	Id       string `json:"id"`
 	Username string `json:"username"`
-	Discrim string `json:"discriminator"`
+	Discrim  string `json:"discriminator"`
 }
 
 func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
@@ -56,9 +58,9 @@ func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
 		}
 
 		dialer := &net.Dialer{
-			LocalAddr:     addr,
-			Timeout:       30 * time.Second,
-			KeepAlive:     30 * time.Second,
+			LocalAddr: addr,
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
 		}
 
 		dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -109,14 +111,16 @@ func parseGlobalOverrides(overrides string) {
 	}
 }
 
-func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, disableHttp2 bool, globalOverrides string) {
+func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, disableHttp2 bool, globalOverrides string, disableRestDetection bool) {
 	transport := createTransport(ip, disableHttp2)
 	client = &http.Client{
 		Transport: transport,
-		Timeout: 90 * time.Second,
+		Timeout:   90 * time.Second,
 	}
 
 	contextTimeout = timeout
+
+	disableRestLimitDetection = disableRestDetection
 
 	parseGlobalOverrides(globalOverrides)
 }
@@ -134,6 +138,10 @@ func GetBotGlobalLimit(token string, user *BotUserResponse) (uint, error) {
 	}
 
 	if strings.HasPrefix(token, "Bearer") {
+		return 50, nil
+	}
+
+	if disableRestLimitDetection {
 		return 50, nil
 	}
 
@@ -205,7 +213,7 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 }
 
 func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
-	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com" + path + "?" + query, body)
+	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com"+path+"?"+query, body)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +239,6 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 				status = "429 Shared"
 			}
 		}
-		
 
 		RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": identifier.(string)}).Observe(elapsed)
 	}

@@ -74,7 +74,9 @@ func main() {
 
 	globalOverrides := lib.EnvGet("BOT_RATELIMIT_OVERRIDES", "")
 
-	lib.ConfigureDiscordHTTPClient(outboundIp, time.Duration(timeout)*time.Millisecond, disableHttp2, globalOverrides)
+	disableGlobalRatelimitDetection := lib.EnvGetBool("DISABLE_GLOBAL_RATELIMIT_DETECTION", false)
+
+	lib.ConfigureDiscordHTTPClient(outboundIp, time.Duration(timeout)*time.Millisecond, disableHttp2, globalOverrides, disableGlobalRatelimitDetection)
 
 	port := lib.EnvGet("PORT", "8080")
 	bindIp := lib.EnvGet("BIND_IP", "0.0.0.0")

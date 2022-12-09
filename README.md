@@ -24,23 +24,24 @@ The proxy sits between the client and discord. Instead of pointing to discord.co
 
 Configuration options are
 
-| Variable        | Value                                         | Default                 |
-|-----------------|-----------------------------------------------|-------------------------|
-| LOG_LEVEL       | panic, fatal, error, warn, info, debug, trace | info                    |
-| PORT            | number                                        | 8080                    |
-| METRICS_PORT    | number                                        | 9000                    |
-| ENABLE_METRICS  | boolean                                       | true                    |
-| ENABLE_PPROF    | boolean                                       | false                   |
-| BUFFER_SIZE     | number                                        | 50                      |
-| OUTBOUND_IP     | string                                        | ""                      |
-| BIND_IP         | string                                        | 0.0.0.0                 |
-| REQUEST_TIMEOUT | number (milliseconds)                         | 5000                    |
-| CLUSTER_PORT    | number                                        | 7946                    |
-| CLUSTER_MEMBERS | string list (comma separated)                 | ""                      |
-| CLUSTER_DNS     | string                                        | ""                      |
-| MAX_BEARER_COUNT| number                                        | 1024                    |
-| DISABLE_HTTP_2  | bool                                          | true                    |
-| BOT_RATELIMIT_OVERRIDES | string list (comma separated)          | ""                      |
+| Variable        | Value                                       | Default |
+|-----------------|---------------------------------------------|---------|
+| LOG_LEVEL       | panic, fatal, error, warn, info, debug, trace | info    |
+| PORT            | number                                      | 8080    |
+| METRICS_PORT    | number                                      | 9000    |
+| ENABLE_METRICS  | boolean                                     | true    |
+| ENABLE_PPROF    | boolean                                     | false   |
+| BUFFER_SIZE     | number                                      | 50      |
+| OUTBOUND_IP     | string                                      | ""      |
+| BIND_IP         | string                                      | 0.0.0.0 |
+| REQUEST_TIMEOUT | number (milliseconds)                       | 5000    |
+| CLUSTER_PORT    | number                                      | 7946    |
+| CLUSTER_MEMBERS | string list (comma separated)               | ""      |
+| CLUSTER_DNS     | string                                      | ""      |
+| MAX_BEARER_COUNT| number                                      | 1024    |
+| DISABLE_HTTP_2  | bool                                        | true    |
+| BOT_RATELIMIT_OVERRIDES | string list (comma separated)       | ""      |
+| DISABLE_GLOBAL_RATELIMIT_DETECTION | boolean                  | false   |
 
 Information on each config var can be found [here](https://github.com/germanoeich/nirn-proxy/blob/main/CONFIG.md)
 

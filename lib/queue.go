@@ -75,6 +75,7 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 				botLimit:          limit,
 			}, nil
 		}
+
 		return nil, err
 	}
 
