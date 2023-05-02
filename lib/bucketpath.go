@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"encoding/base64"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -109,6 +110,11 @@ func GetOptimisticBucketPath(url string, method string) string {
 			return "/" + MajorGuilds + "/!/channels"
 		}
 		fallthrough
+	case MajorInteractions:
+		if numParts == 4 && parts[3] == "callback" {
+			return "/" + MajorInteractions + "/" + parts[1] + "/!/callback"
+		}
+		fallthrough
 	case MajorWebhooks:
 		fallthrough
 	default:
@@ -150,6 +156,34 @@ func GetOptimisticBucketPath(url string, method string) string {
 				//Reactions can only be followed by emoji/userid combo, since we don't care, break
 				break
 			}
+
+			// Strip webhook tokens, or extract interaction ID
+			if len(part) >= 64 {
+				// aW50ZXJhY3Rpb246 is base64 for "interaction:"
+				if !strings.HasPrefix(part, "aW50ZXJhY3Rpb246") {
+					bucket.WriteString("/!")
+					continue
+				}
+
+				var interactionId string
+
+				// fix padding
+				if i := len(part) % 4; i != 0 {
+					part += strings.Repeat("=", 4-i)
+				}
+
+				decodedPart, err := base64.StdEncoding.DecodeString(part)
+				if err != nil {
+					interactionId = "Unknown"
+				} else {
+					interactionId = strings.Split(string(decodedPart), ":")[1]
+				}
+			
+				bucket.WriteByte('/')
+				bucket.WriteString(interactionId)
+				continue
+			}
+
 
 			// Strip webhook tokens and interaction tokens
 			if (currMajor == MajorWebhooks || currMajor == MajorInteractions) && len(part) >= 64 {
