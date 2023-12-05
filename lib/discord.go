@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
 	"math"
@@ -14,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 var client *http.Client
@@ -242,6 +243,28 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 
 		RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": identifier.(string)}).Observe(elapsed)
 	}
+
+	// ANTIRAID-SPECIFIC, Patch /gateway/bot to return a link to gateway-proxy
+	if path == "/api/gateway/bot" || path == "/api/v10/gateway/bot" {
+		var data map[string]any
+
+		err := json.NewDecoder(discordResp.Body).Decode(&data)
+
+		if err != nil {
+			return nil, err
+		}
+
+		data["url"] = "ws://0.0.0.0:7878"
+
+		bytes, err := json.Marshal(data)
+
+		if err != nil {
+			return nil, err
+		}
+
+		discordResp.Body = ioutil.NopCloser(strings.NewReader(string(bytes)))
+	}
+
 	return discordResp, err
 }
 
