@@ -245,7 +245,7 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 	}
 
 	// ANTIRAID-SPECIFIC, Patch /gateway/bot to return a link to gateway-proxy
-	if path == "/api/gateway/bot" || path == "/api/v10/gateway/bot" {
+	if path == "/api/gateway" || path == "/api/v9/gateway" || path == "/api/gateway/bot" || path == "/api/v10/gateway/bot" {
 		var data map[string]any
 
 		err := json.NewDecoder(discordResp.Body).Decode(&data)
