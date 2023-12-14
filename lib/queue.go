@@ -3,15 +3,16 @@ package lib
 import (
 	"context"
 	"errors"
-	"github.com/Clever/leakybucket"
-	"github.com/Clever/leakybucket/memory"
-	"github.com/sirupsen/logrus"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Clever/leakybucket"
+	"github.com/Clever/leakybucket/memory"
+	"github.com/sirupsen/logrus"
 )
 
 type QueueItem struct {
@@ -82,7 +83,7 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 	identifier := "NoAuth"
 	if user != nil {
 		queueType = Bot
-		identifier = user.Username + "#" + user.Discrim
+		identifier = user.Id
 	}
 
 	if queueType == Bearer {

@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -23,7 +24,21 @@ var contextTimeout time.Duration
 
 var globalOverrideMap = make(map[string]uint)
 
+var endpointCache = make(map[string]*Cache)
+
 var disableRestLimitDetection = false
+
+var cacheEndpoints = map[string]time.Duration{
+	"/api/users/@me":       10 * time.Minute,
+	"/api/v9/users/@me":    10 * time.Minute,
+	"/api/v10/users/@me":   10 * time.Minute,
+	"/api/gateway":         60 * time.Minute,
+	"/api/v9/gateway":      60 * time.Minute,
+	"/api/v10/gateway":     60 * time.Minute,
+	"/api/gateway/bot":     30 * time.Minute,
+	"/api/v9/gateway/bot":  30 * time.Minute,
+	"/api/v10/gateway/bot": 30 * time.Minute,
+}
 
 type BotGatewayResponse struct {
 	SessionStartLimit map[string]int `json:"session_start_limit"`
@@ -201,7 +216,7 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 		return nil, errors.New("500 on users/@me")
 	}
 
-	body, _ := ioutil.ReadAll(bot.Body)
+	body, _ := io.ReadAll(bot.Body)
 
 	var s BotUserResponse
 
@@ -214,6 +229,41 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 }
 
 func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
+	identifier := ctx.Value("identifier")
+	if identifier == nil {
+		// Queues always have an identifier, if there's none in the context, we called the method from outside a queue
+		identifier = "Internal"
+	}
+
+	identifierStr, ok := identifier.(string)
+
+	if ok {
+		// Check endpoint cache
+		if endpointCache[identifierStr] != nil {
+			cacheEntry := endpointCache[identifierStr].Get(path)
+
+			if cacheEntry != nil {
+				// Send cached response
+				logger.WithFields(logrus.Fields{
+					"method": method,
+					"path":   path,
+					"status": "200 (cached)",
+				}).Debug("Discord request")
+
+				headers := cacheEntry.Headers.Clone()
+				headers.Set("X-Cached", "true")
+
+				return &http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(bytes.NewBuffer(cacheEntry.Data)),
+					Header:     headers,
+				}, nil
+			}
+		} else {
+			endpointCache[identifierStr] = NewCache()
+		}
+	}
+
 	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com"+path+"?"+query, body)
 	if err != nil {
 		return nil, err
@@ -222,12 +272,6 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 	discordReq.Header = header
 	startTime := time.Now()
 	discordResp, err := client.Do(discordReq)
-
-	identifier := ctx.Value("identifier")
-	if identifier == nil {
-		// Queues always have an identifier, if there's none in the context, we called the method from outside a queue
-		identifier = "Internal"
-	}
 
 	if err == nil {
 		route := GetMetricsPath(path)
@@ -244,7 +288,6 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 		RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": identifier.(string)}).Observe(elapsed)
 	}
 
-	// ANTIRAID-SPECIFIC, Patch /gateway/bot to return a link to gateway-proxy
 	if path == "/api/gateway" || path == "/api/v9/gateway" || path == "/api/gateway/bot" || path == "/api/v10/gateway/bot" {
 		var data map[string]any
 
@@ -262,7 +305,22 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 			return nil, err
 		}
 
-		discordResp.Body = ioutil.NopCloser(strings.NewReader(string(bytes)))
+		discordResp.Body = io.NopCloser(strings.NewReader(string(bytes)))
+	}
+
+	if expiry, ok := cacheEndpoints[path]; ok {
+		if discordResp.StatusCode == 200 {
+			body, _ := io.ReadAll(discordResp.Body)
+			endpointCache[identifierStr].Set(path, &CacheEntry{
+				Data:      body,
+				CreatedAt: time.Now(),
+				ExpiresIn: &expiry,
+				Headers:   discordResp.Header,
+			})
+
+			// Put body back into response
+			discordResp.Body = io.NopCloser(bytes.NewBuffer(body))
+		}
 	}
 
 	return discordResp, err
