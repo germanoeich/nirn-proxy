@@ -4,11 +4,30 @@ import (
 	"github.com/hashicorp/memberlist"
 	"os"
 	"time"
+	"net"
 )
 
-func InitMemberList(knownMembers []string, port int, proxyPort string, manager *QueueManager) *memberlist.Memberlist {
+func GetLocalIP() (string) {
+    addresses, err := net.InterfaceAddrs()
+    if err != nil {
+        return "0.0.0.0"
+    }
+
+    for _, addr := range addresses {
+        if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+            if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+            }
+        }
+    }
+
+	return "0.0.0.0"
+}
+
+func InitMemberList(knownMembers []string, port int, proxyPort string, manager *QueueManager) *memberlist.Memberlist {	
 	config := memberlist.DefaultLANConfig()
 	config.BindPort = port
+	config.AdvertiseAddr = GetLocalIP()
 	config.AdvertisePort = port
 	config.Delegate = NirnDelegate{
 		proxyPort: proxyPort,
