@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"os"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -252,6 +253,10 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 
 				headers := cacheEntry.Headers.Clone()
 				headers.Set("X-Cached", "true")
+        			// Set cache headers so bot won't be perpetually stuck
+        			headers.Set("X-RateLimit-Limit", "5")
+        			headers.Set("X-RateLimit-Remaining", "5")
+        			headers.Set("X-RateLimit-Bucket", "cache")
 
 				return &http.Response{
 					StatusCode: 200,
@@ -288,6 +293,7 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 		RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": identifier.(string)}).Observe(elapsed)
 	}
 
+	if os.Getenv("EXP") == "true" {
 	if path == "/api/gateway" || path == "/api/v9/gateway" || path == "/api/gateway/bot" || path == "/api/v10/gateway/bot" {
 		var data map[string]any
 
@@ -297,7 +303,7 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 			return nil, err
 		}
 
-		data["url"] = "ws://0.0.0.0:7878"
+		data["url"] = "ws://0.0.0.0:3220"
 
 		bytes, err := json.Marshal(data)
 
@@ -307,6 +313,7 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 
 		discordResp.Body = io.NopCloser(strings.NewReader(string(bytes)))
 	}
+}
 
 	if expiry, ok := cacheEndpoints[path]; ok {
 		if discordResp.StatusCode == 200 {
