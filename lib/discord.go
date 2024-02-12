@@ -1,22 +1,21 @@
 package lib
 
 import (
-	"os"
 	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
 	"math"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 var client *http.Client
@@ -39,6 +38,29 @@ var cacheEndpoints = map[string]time.Duration{
 	"/api/gateway/bot":     30 * time.Minute,
 	"/api/v9/gateway/bot":  30 * time.Minute,
 	"/api/v10/gateway/bot": 30 * time.Minute,
+}
+
+var wsProxy string
+
+func init() {
+	if len(os.Args) > 1 {
+		for _, arg := range os.Args[1:] {
+			argSplit := strings.SplitN(arg, "=", 2)
+
+			if len(argSplit) < 2 {
+				continue
+			}
+
+			switch argSplit[0] {
+			case "ws-proxy":
+				wsProxy = argSplit[1]
+			}
+		}
+	}
+
+	if os.Getenv("WS_PROXY") != "" {
+		wsProxy = os.Getenv("WS_PROXY")
+	}
 }
 
 type BotGatewayResponse struct {
@@ -253,10 +275,10 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 
 				headers := cacheEntry.Headers.Clone()
 				headers.Set("X-Cached", "true")
-        			// Set cache headers so bot won't be perpetually stuck
-        			headers.Set("X-RateLimit-Limit", "5")
-        			headers.Set("X-RateLimit-Remaining", "5")
-        			headers.Set("X-RateLimit-Bucket", "cache")
+				// Set cache headers so bot won't be perpetually stuck
+				headers.Set("X-RateLimit-Limit", "5")
+				headers.Set("X-RateLimit-Remaining", "5")
+				headers.Set("X-RateLimit-Bucket", "cache")
 
 				return &http.Response{
 					StatusCode: 200,
@@ -293,27 +315,27 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 		RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": identifier.(string)}).Observe(elapsed)
 	}
 
-	if os.Getenv("EXP") == "true" {
-	if path == "/api/gateway" || path == "/api/v9/gateway" || path == "/api/gateway/bot" || path == "/api/v10/gateway/bot" {
-		var data map[string]any
+	if wsProxy != "" {
+		if path == "/api/gateway" || path == "/api/v9/gateway" || path == "/api/gateway/bot" || path == "/api/v10/gateway/bot" {
+			var data map[string]any
 
-		err := json.NewDecoder(discordResp.Body).Decode(&data)
+			err := json.NewDecoder(discordResp.Body).Decode(&data)
 
-		if err != nil {
-			return nil, err
+			if err != nil {
+				return nil, err
+			}
+
+			data["url"] = wsProxy
+
+			bytes, err := json.Marshal(data)
+
+			if err != nil {
+				return nil, err
+			}
+
+			discordResp.Body = io.NopCloser(strings.NewReader(string(bytes)))
 		}
-
-		data["url"] = "ws://0.0.0.0:3220"
-
-		bytes, err := json.Marshal(data)
-
-		if err != nil {
-			return nil, err
-		}
-
-		discordResp.Body = io.NopCloser(strings.NewReader(string(bytes)))
 	}
-}
 
 	if expiry, ok := cacheEndpoints[path]; ok {
 		if discordResp.StatusCode == 200 {
