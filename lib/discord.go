@@ -54,6 +54,10 @@ func init() {
 			switch argSplit[0] {
 			case "ws-proxy":
 				wsProxy = argSplit[1]
+				break
+			case "port":
+				os.Setenv("PORT", argSplit[1])
+				break
 			}
 		}
 	}
