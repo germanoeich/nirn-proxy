@@ -38,6 +38,8 @@ var cacheEndpoints = map[string]time.Duration{
 	"/api/gateway/bot":     30 * time.Minute,
 	"/api/v9/gateway/bot":  30 * time.Minute,
 	"/api/v10/gateway/bot": 30 * time.Minute,
+	"/api/v9/applications/@me": 5 * time.Minute,
+	"/api/v10/applications/@me": 5 * time.Minute,
 }
 
 var wsProxy string
@@ -261,6 +263,8 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 		// Queues always have an identifier, if there's none in the context, we called the method from outside a queue
 		identifier = "Internal"
 	}
+
+	logger.Info(method, path+"?"+query)
 
 	identifierStr, ok := identifier.(string)
 
