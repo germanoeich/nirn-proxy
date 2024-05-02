@@ -290,7 +290,8 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 
 				headers := cacheEntry.Headers.Clone()
 				headers.Set("X-Cached", "true")
-				// Set cache headers so bot won't be perpetually stuck
+
+				// Set rl headers so bot won't be perpetually stuck
 				headers.Set("X-RateLimit-Limit", "5")
 				headers.Set("X-RateLimit-Remaining", "5")
 				headers.Set("X-RateLimit-Bucket", "cache")
@@ -382,7 +383,20 @@ func ProcessRequest(ctx context.Context, item *QueueItem) (*http.Response, error
 		if ctx.Err() == context.DeadlineExceeded {
 			if ratelimitOver408 {
 				res.WriteHeader(429)
-				res.Header().Add("Reset-After", "2")
+				res.Header().Add("Reset-After", "3")
+
+				// Set rl headers so bot won't be perpetually stuck
+				if res.Header().Get("X-RateLimit-Limit") == "" {
+					res.Header().Set("X-RateLimit-Limit", "5")
+				}
+				if res.Header().Get("X-RateLimit-Remaining") == "" {
+					res.Header().Set("X-RateLimit-Remaining", "0")
+				}
+
+				if res.Header().Get("X-RateLimit-Bucket") == "" {
+					res.Header().Set("X-RateLimit-Bucket", "proxyTimeout")
+				}
+
 			} else {
 				res.WriteHeader(408)
 			}
