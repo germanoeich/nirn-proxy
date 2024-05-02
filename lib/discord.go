@@ -6,9 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"github.com/sirupsen/logrus"
 	"io"
-	"io/ioutil"
 	"math"
 	"net"
 	"net/http"
@@ -16,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 var client *http.Client
@@ -29,20 +29,21 @@ var endpointCache = make(map[string]*Cache)
 var disableRestLimitDetection = false
 
 var cacheEndpoints = map[string]time.Duration{
-	"/api/users/@me":       10 * time.Minute,
-	"/api/v9/users/@me":    10 * time.Minute,
-	"/api/v10/users/@me":   10 * time.Minute,
-	"/api/gateway":         60 * time.Minute,
-	"/api/v9/gateway":      60 * time.Minute,
-	"/api/v10/gateway":     60 * time.Minute,
-	"/api/gateway/bot":     30 * time.Minute,
-	"/api/v9/gateway/bot":  30 * time.Minute,
-	"/api/v10/gateway/bot": 30 * time.Minute,
-	"/api/v9/applications/@me": 5 * time.Minute,
+	"/api/users/@me":            10 * time.Minute,
+	"/api/v9/users/@me":         10 * time.Minute,
+	"/api/v10/users/@me":        10 * time.Minute,
+	"/api/gateway":              60 * time.Minute,
+	"/api/v9/gateway":           60 * time.Minute,
+	"/api/v10/gateway":          60 * time.Minute,
+	"/api/gateway/bot":          30 * time.Minute,
+	"/api/v9/gateway/bot":       30 * time.Minute,
+	"/api/v10/gateway/bot":      30 * time.Minute,
+	"/api/v9/applications/@me":  5 * time.Minute,
 	"/api/v10/applications/@me": 5 * time.Minute,
 }
 
 var wsProxy string
+var ratelimitOver408 bool
 
 func init() {
 	if len(os.Args) > 1 {
@@ -56,16 +57,22 @@ func init() {
 			switch argSplit[0] {
 			case "ws-proxy":
 				wsProxy = argSplit[1]
-				break
 			case "port":
 				os.Setenv("PORT", argSplit[1])
-				break
+			case "ratelimit-over-408":
+				ratelimitOver408 = true
+			default:
+				logrus.Fatal("Unknown argument: ", argSplit[0])
 			}
 		}
 	}
 
 	if os.Getenv("WS_PROXY") != "" {
 		wsProxy = os.Getenv("WS_PROXY")
+	}
+
+	if os.Getenv("RATELIMIT_OVER_408") != "" {
+		ratelimitOver408 = os.Getenv("RATELIMIT_OVER_408") == "true"
 	}
 }
 
@@ -206,7 +213,7 @@ func GetBotGlobalLimit(token string, user *BotUserResponse) (uint, error) {
 		return 0, errors.New("500 on gateway/bot")
 	}
 
-	body, _ := ioutil.ReadAll(bot.Body)
+	body, _ := io.ReadAll(bot.Body)
 
 	var s BotGatewayResponse
 
@@ -373,7 +380,12 @@ func ProcessRequest(ctx context.Context, item *QueueItem) (*http.Response, error
 
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			res.WriteHeader(408)
+			if ratelimitOver408 {
+				res.WriteHeader(429)
+				res.Header().Add("Reset-After", "2")
+			} else {
+				res.WriteHeader(408)
+			}
 		} else {
 			res.WriteHeader(500)
 		}
