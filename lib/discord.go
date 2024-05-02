@@ -397,6 +397,11 @@ func ProcessRequest(ctx context.Context, item *QueueItem) (*http.Response, error
 					res.Header().Set("X-RateLimit-Bucket", "proxyTimeout")
 				}
 
+				// Default to 'shared' so the bot doesn't think its
+				// against them
+				if res.Header().Get("X-RateLimit-Scope") == "" {
+					res.Header().Set("X-RateLimit-Scope", "shared")
+				}
 			} else {
 				res.WriteHeader(408)
 			}
