@@ -51,7 +51,7 @@ func init() {
 			argSplit := strings.SplitN(arg, "=", 2)
 
 			if len(argSplit) < 2 {
-				continue
+				argSplit = append(argSplit, "")
 			}
 
 			switch argSplit[0] {
