@@ -8,15 +8,12 @@ import (
 type CacheEntry struct {
 	Data      []byte
 	CreatedAt time.Time
-	ExpiresIn *time.Duration
+	ExpiresIn time.Duration
 	Headers   http.Header
 }
 
 func (c *CacheEntry) Expired() bool {
-	if c.ExpiresIn == nil {
-		return false
-	}
-	return time.Since(c.CreatedAt) > *c.ExpiresIn
+	return time.Since(c.CreatedAt) > c.ExpiresIn
 }
 
 type Cache struct {
