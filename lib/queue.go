@@ -83,7 +83,7 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 	identifier := "NoAuth"
 	if user != nil {
 		queueType = Bot
-		identifier = user.Id
+		identifier = user.Username + "#" + user.Discrim
 	}
 
 	if queueType == Bearer {
