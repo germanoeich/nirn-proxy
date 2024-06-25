@@ -108,7 +108,13 @@ func init() {
 		wsProxy = lib.EnvGet("WS_PROXY", "")
 	}
 
-	ratelimitOver408 = lib.EnvGetBool("RATELIMIT_OVER_408", false)
+	if !ratelimitOver408 {
+		ratelimitOver408 = lib.EnvGetBool("RATELIMIT_OVER_408", false)
+	}
+
+	if !useEndpointCache {
+		useEndpointCache = lib.EnvGetBool("USE_ENDPOINT_CACHE", false)
+	}
 }
 
 type BotGatewayResponse struct {
