@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -28,19 +29,24 @@ var endpointCache = make(map[string]*Cache)
 
 var disableRestLimitDetection = false
 
+// List of endpoints to cache and their expiry times
+var useEndpointCache bool
 var cacheEndpoints = map[string]time.Duration{
-	"/api/users/@me":            10 * time.Minute,
-	"/api/v9/users/@me":         10 * time.Minute,
-	"/api/v10/users/@me":        10 * time.Minute,
-	"/api/gateway":              60 * time.Minute,
-	"/api/v9/gateway":           60 * time.Minute,
-	"/api/v10/gateway":          60 * time.Minute,
-	"/api/gateway/bot":          30 * time.Minute,
-	"/api/v9/gateway/bot":       30 * time.Minute,
-	"/api/v10/gateway/bot":      30 * time.Minute,
-	"/api/v9/applications/@me":  5 * time.Minute,
-	"/api/v10/applications/@me": 5 * time.Minute,
+	"/api/users/@me":           10 * time.Minute,
+	"/api/v*/users/@me":        10 * time.Minute,
+	"/api/gateway":             60 * time.Minute,
+	"/api/v*/gateway":          60 * time.Minute,
+	"/api/gateway/*":           30 * time.Minute,
+	"/api/v*/gateway/*":        30 * time.Minute,
+	"/api/v*/applications/@me": 5 * time.Minute,
 }
+
+// In some cases, we may want to transparently rewrite endpoints
+//
+// For example, when using a gateway proxy, the proxy may provide its own /api/gateway/bot endpoint
+//
+// This allows transparently rewriting the endpoint to the proxy's
+var endpointRewrite = map[string]string{}
 
 var wsProxy string
 var ratelimitOver408 bool
@@ -61,6 +67,37 @@ func init() {
 				os.Setenv("PORT", argSplit[1])
 			case "ratelimit-over-408":
 				ratelimitOver408 = true
+			case "use-endpoint-cache":
+				useEndpointCache = true
+			case "cache-endpoints":
+				if argSplit[1] == "" {
+					continue
+				}
+
+				if argSplit[1] == "false" {
+					cacheEndpoints = make(map[string]time.Duration)
+				} else {
+					var endpoints map[string]time.Duration
+
+					err := json.Unmarshal([]byte(argSplit[1]), &endpoints)
+
+					if err != nil {
+						logrus.Fatal("Failed to parse cache-endpoints: ", err)
+					}
+
+					cacheEndpoints = endpoints
+				}
+			case "endpoint-rewrite":
+				for _, rewrite := range strings.Split(argSplit[1], ",") {
+					// split by '->'
+					rewriteSplit := strings.Split(rewrite, "@")
+
+					if len(rewriteSplit) != 2 {
+						logrus.Fatal("Invalid endpoint rewrite: ", rewrite)
+					}
+
+					endpointRewrite[rewriteSplit[0]] = rewriteSplit[1]
+				}
 			default:
 				logrus.Fatal("Unknown argument: ", argSplit[0])
 			}
@@ -71,7 +108,9 @@ func init() {
 		wsProxy = os.Getenv("WS_PROXY")
 	}
 
-	lib.EnvGetBool("RATELIMIT_OVER_408", false)
+	if os.Getenv("RATELIMIT_OVER_408") != "" {
+		ratelimitOver408 = os.Getenv("RATELIMIT_OVER_408") == "true"
+	}
 }
 
 type BotGatewayResponse struct {
@@ -265,19 +304,25 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
 	identifier := ctx.Value("identifier")
 	if identifier == nil {
-		// Queues always have an identifier, if there's none in the context, we called the method from outside a queue
-		identifier = "Internal"
+		identifier = "internal"
 	}
 
-	logger.Info(method, path+"?"+query)
+	logger.Info(method, " ", path+"?"+query)
 
 	identifierStr, ok := identifier.(string)
 
 	if ok {
-		// Check endpoint cache
-		if endpointCache[identifierStr] != nil {
-			cacheEntry := endpointCache[identifierStr].Get(path)
+		if useEndpointCache {
+			cache, ok := endpointCache[identifierStr]
+	
+			if !ok {
+				endpointCache[identifierStr] = NewCache()
+				cache = endpointCache[identifierStr]
+			}
 
+			// Check endpoint cache
+			cacheEntry := cache.Get(path)
+	
 			if cacheEntry != nil {
 				// Send cached response
 				logger.WithFields(logrus.Fields{
@@ -285,27 +330,35 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 					"path":   path,
 					"status": "200 (cached)",
 				}).Debug("Discord request")
-
+	
 				headers := cacheEntry.Headers.Clone()
 				headers.Set("X-Cached", "true")
-
+	
 				// Set rl headers so bot won't be perpetually stuck
 				headers.Set("X-RateLimit-Limit", "5")
 				headers.Set("X-RateLimit-Remaining", "5")
 				headers.Set("X-RateLimit-Bucket", "cache")
-
+	
 				return &http.Response{
 					StatusCode: 200,
 					Body:       io.NopCloser(bytes.NewBuffer(cacheEntry.Data)),
 					Header:     headers,
 				}, nil
 			}
-		} else {
-			endpointCache[identifierStr] = NewCache()
 		}
 	}
 
-	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com"+path+"?"+query, body)
+	// Check for a rewrite
+	var urlBase = "https://discord.com"
+	for rw := range endpointRewrite {
+		if ok, _ := filepath.Match(rw, path); ok {
+			urlBase = endpointRewrite[rw]
+			break
+
+		}
+	}
+
+	discordReq, err := http.NewRequestWithContext(ctx, method, urlBase+path+"?"+query, body)
 	if err != nil {
 		return nil, err
 	}
@@ -329,8 +382,18 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 		RequestHistogram.With(map[string]string{"route": route, "status": status, "method": method, "clientId": identifier.(string)}).Observe(elapsed)
 	}
 
-	if wsProxy != "" {
-		if strings.HasSuffix(path, "/gateway") || strings.HasSuffix(path, "/gateway/bot") {
+	if wsProxy != "" && discordResp.StatusCode == 200 {
+		var isGwProxyUrl bool
+
+		if path == "/api/gateway" || path == "/api/gateway/bot" {
+			isGwProxyUrl = true
+		} else if ok, _ := filepath.Match("/api/v*/gateway/bot", path); ok {
+			isGwProxyUrl = true
+		} else if ok, _ := filepath.Match("/api/v*/gateway", path); ok {
+			isGwProxyUrl = true
+		}
+
+		if isGwProxyUrl {
 			var data map[string]any
 
 			err := json.NewDecoder(discordResp.Body).Decode(&data)
@@ -351,19 +414,26 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 		}
 	}
 
-	if expiry, ok := cacheEndpoints[path]; ok {
-		if discordResp.StatusCode == 200 {
-			body, _ := io.ReadAll(discordResp.Body)
-			endpointCache[identifierStr].Set(path, &CacheEntry{
-				Data:      body,
-				CreatedAt: time.Now(),
-				ExpiresIn: &expiry,
-				Headers:   discordResp.Header,
-			})
+	var expiry *time.Duration
 
-			// Put body back into response
-			discordResp.Body = io.NopCloser(bytes.NewBuffer(body))
+	for endpoint, exp := range cacheEndpoints {
+		if ok, _ := filepath.Match(endpoint, path); ok {
+			expiry = &exp
+			break
 		}
+	}
+
+	if expiry != nil && discordResp.StatusCode == 200 {
+		body, _ := io.ReadAll(discordResp.Body)
+		endpointCache[identifierStr].Set(path, &CacheEntry{
+			Data:      body,
+			CreatedAt: time.Now(),
+			ExpiresIn: expiry,
+			Headers:   discordResp.Header,
+		})
+
+		// Put body back into response
+		discordResp.Body = io.NopCloser(bytes.NewBuffer(body))
 	}
 
 	return discordResp, err
@@ -426,3 +496,4 @@ func ProcessRequest(ctx context.Context, item *QueueItem) (*http.Response, error
 
 	return discordResp, nil
 }
+
