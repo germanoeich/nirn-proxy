@@ -418,26 +418,28 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 		}
 	}
 
-	var expiry *time.Duration
+	if useEndpointCache {
+		var expiry *time.Duration
 
-	for endpoint, exp := range cacheEndpoints {
-		if ok, _ := filepath.Match(endpoint, path); ok {
-			expiry = &exp
-			break
+		for endpoint, exp := range cacheEndpoints {
+			if ok, _ := filepath.Match(endpoint, path); ok {
+				expiry = &exp
+				break
+			}
 		}
-	}
 
-	if expiry != nil && discordResp.StatusCode == 200 {
-		body, _ := io.ReadAll(discordResp.Body)
-		endpointCache[identifierStr].Set(path, &CacheEntry{
-			Data:      body,
-			CreatedAt: time.Now(),
-			ExpiresIn: *expiry,
-			Headers:   discordResp.Header,
-		})
+		if expiry != nil && discordResp.StatusCode == 200 {
+			body, _ := io.ReadAll(discordResp.Body)
+			endpointCache[identifierStr].Set(path, &CacheEntry{
+				Data:      body,
+				CreatedAt: time.Now(),
+				ExpiresIn: *expiry,
+				Headers:   discordResp.Header,
+			})
 
-		// Put body back into response
-		discordResp.Body = io.NopCloser(bytes.NewBuffer(body))
+			// Put body back into response
+			discordResp.Body = io.NopCloser(bytes.NewBuffer(body))
+		}
 	}
 
 	return discordResp, err
