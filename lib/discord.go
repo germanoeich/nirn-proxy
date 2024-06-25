@@ -104,7 +104,9 @@ func init() {
 		}
 	}
 
-	lib.EnvGet("WS_PROXY", "")
+	if wsProxy == "" {
+		wsProxy = lib.EnvGet("WS_PROXY", "")
+	}
 
 	ratelimitOver408 = lib.EnvGetBool("RATELIMIT_OVER_408", false)
 }
