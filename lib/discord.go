@@ -65,11 +65,11 @@ func init() {
 				wsProxy = argSplit[1]
 			case "port":
 				os.Setenv("PORT", argSplit[1])
-			case "ratelimit-over-408":
+			case "ratelimit-over-408": 
 				ratelimitOver408 = true
-			case "use-endpoint-cache":
+			case "use-endpoint-cache": 
 				useEndpointCache = true
-			case "cache-endpoints":
+			case "cache-endpoints": 
 				if argSplit[1] == "" {
 					continue
 				}
@@ -108,9 +108,7 @@ func init() {
 		wsProxy = os.Getenv("WS_PROXY")
 	}
 
-	if os.Getenv("RATELIMIT_OVER_408") != "" {
-		ratelimitOver408 = os.Getenv("RATELIMIT_OVER_408") == "true"
-	}
+	ratelimitOver408 = lib.EnvGetBool("RATELIMIT_OVER_408", false)
 }
 
 type BotGatewayResponse struct {
