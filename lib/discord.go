@@ -71,9 +71,7 @@ func init() {
 		wsProxy = os.Getenv("WS_PROXY")
 	}
 
-	if os.Getenv("RATELIMIT_OVER_408") != "" {
-		ratelimitOver408 = os.Getenv("RATELIMIT_OVER_408") == "true"
-	}
+	lib.EnvGetBool("RATELIMIT_OVER_408", false)
 }
 
 type BotGatewayResponse struct {
