@@ -105,15 +105,15 @@ func init() {
 	}
 
 	if wsProxy == "" {
-		wsProxy = lib.EnvGet("WS_PROXY", "")
+		wsProxy = EnvGet("WS_PROXY", "")
 	}
 
 	if !ratelimitOver408 {
-		ratelimitOver408 = lib.EnvGetBool("RATELIMIT_OVER_408", false)
+		ratelimitOver408 = EnvGetBool("RATELIMIT_OVER_408", false)
 	}
 
 	if !useEndpointCache {
-		useEndpointCache = lib.EnvGetBool("USE_ENDPOINT_CACHE", false)
+		useEndpointCache = EnvGetBool("USE_ENDPOINT_CACHE", false)
 	}
 }
 
@@ -432,7 +432,7 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 		endpointCache[identifierStr].Set(path, &CacheEntry{
 			Data:      body,
 			CreatedAt: time.Now(),
-			ExpiresIn: expiry,
+			ExpiresIn: *expiry,
 			Headers:   discordResp.Header,
 		})
 
