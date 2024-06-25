@@ -310,7 +310,7 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 	identifierStr, ok := identifier.(string)
 
 	if ok {
-		if useEndpointCache {
+		if useEndpointCache && identifier != "internal" {
 			cache, ok := endpointCache[identifierStr]
 	
 			if !ok {
