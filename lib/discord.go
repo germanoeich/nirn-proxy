@@ -389,11 +389,7 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 	if wsProxy != "" && discordResp.StatusCode == 200 {
 		var isGwProxyUrl bool
 
-		if path == "/api/gateway" || path == "/api/gateway/bot" {
-			isGwProxyUrl = true
-		} else if ok, _ := filepath.Match("/api/v*/gateway/bot", path); ok {
-			isGwProxyUrl = true
-		} else if ok, _ := filepath.Match("/api/v*/gateway", path); ok {
+		if strings.HasSuffix(path, "/gateway") || strings.HasSuffix(path, "/gateway/bot") {  
 			isGwProxyUrl = true
 		}
 
