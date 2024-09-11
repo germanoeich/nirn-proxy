@@ -546,6 +546,12 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 		}
 		return
 	}
+
+	// Prevent a weird rate limit issue with reaction modify
+	// Based on eris code, we should sleep 250ms on this endpoint
+	if strings.HasSuffix(path, "/reactions/!modify") {
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHashInt uint64) {
