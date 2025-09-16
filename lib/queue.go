@@ -298,6 +298,8 @@ func isInteraction(url string) bool {
 }
 
 func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *QueueChannel, path string, pathHash uint64) {
+	// This is fine to do as if ch.ratelimit is nil, then we have sole access to the RequestQueue resources, so there
+	// is no need for a lock
 	if ch.ratelimit != nil {
 		defer ch.ratelimit.Release()
 	}
@@ -332,11 +334,10 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 
 	if bucket != "" {
 		if ch.ratelimit == nil {
-			ch.Lock()
-			if ch.ratelimit == nil {
-				ch.ratelimit = NewBucketRatelimit(remaining, limit, resetAt, resetAfter, bucket, path, q.identifier)
-			}
-			ch.Unlock()
+			// We can safely do this as it is ensured that if ch.ratelimit is not set, we will always
+			// make sequential requests and not concurrent ones. The first request that gets a ratelimit bucket
+			// will set the ratelimit and it wont be set back to nil afterwards
+			ch.ratelimit = NewBucketRatelimit(remaining, limit, resetAt, resetAfter, bucket, path, q.identifier)
 		} else {
 			ch.ratelimit.Update(bucket, remaining, limit, resetAt, resetAfter)
 		}
@@ -404,10 +405,12 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			_ = atomic.CompareAndSwapInt64(q.globalLockedUntil, globalUnlockedUntil, 0)
 		}
 
+		ch.Lock()
 		if ch.lockerFun != nil {
 			ch.lockerFun(item)
 			continue
 		}
+		ch.Unlock()
 
 		// This is unfortunate, but we need to read the body here so that the ctx gets closed properly
 		// when the client disconnects, which is very useful for cancelling `ratelimit.Acquire` early
@@ -415,6 +418,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		var err error
 		item.ReqBody, err = io.ReadAll(item.Req.Body)
 		if err != nil {
+			_ = item.Req.Body.Close()
 			item.errChan <- err
 			continue
 		}
