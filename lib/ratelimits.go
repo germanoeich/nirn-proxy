@@ -111,6 +111,14 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 		b.inTransitLock.Unlock()
 		select {
 		case <-ctx.Done():
+			b.inTransitLock.Lock()
+			if b.transitWaitChan != nil {
+				b.transitWaitChan = nil
+			} else {
+				// Return the slot that was given to us
+				b.inTransit--
+			}
+			b.inTransitLock.Unlock()
 			return ctx.Err()
 		case <-b.transitWaitChan:
 		}
@@ -192,7 +200,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 			// Setting this here will have an effect below
 			b.outOfSync = true
 
-		} else if !b.fixedWindow && resetAtEq {
+		} else if b.fixedWindow && !resetAtEq {
 			logger.WithFields(logrus.Fields{
 				"bucket":          b.bucket,
 				"path":            b.path,
