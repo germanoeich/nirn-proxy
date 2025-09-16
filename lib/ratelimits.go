@@ -107,7 +107,8 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 	b.inTransitLock.Lock()
 	if b.inTransit >= b.limit {
-		b.transitWaitChan = make(chan interface{})
+		// Buffer of 1 here to prevent deadlocks in a worst case scenario
+		b.transitWaitChan = make(chan interface{}, 1)
 		b.inTransitLock.Unlock()
 		select {
 		case <-ctx.Done():
@@ -162,14 +163,16 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 
 func (b *BucketRateLimit) Release() {
 	b.inTransitLock.Lock()
-	b.inTransitLock.Unlock()
+	defer b.inTransitLock.Unlock()
 
 	if b.transitWaitChan != nil && b.inTransit <= b.limit {
 		// We dont update inTransit here as we are giving
 		// our slot to the one that is waiting
 		b.transitWaitChan <- nil
 		b.transitWaitChan = nil
-	} else {
+	}
+
+	if b.inTransit > 0 {
 		b.inTransit--
 	}
 }

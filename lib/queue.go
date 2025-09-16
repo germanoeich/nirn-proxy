@@ -416,6 +416,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			item.errChan <- err
 			continue
 		}
+		_ = item.Req.Body.Close()
 
 		if ch.ratelimit != nil {
 			if err := ch.ratelimit.Acquire(ctx); err != nil {
