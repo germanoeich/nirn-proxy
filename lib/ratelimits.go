@@ -170,6 +170,7 @@ func (b *BucketRateLimit) Release() {
 		// our slot to the one that is waiting
 		b.transitWaitChan <- nil
 		b.transitWaitChan = nil
+		return
 	}
 
 	if b.inTransit > 0 {
