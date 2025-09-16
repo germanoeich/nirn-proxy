@@ -397,9 +397,11 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			continue
 		}
 
-		if globalLockedUntil := atomic.LoadInt64(q.globalLockedUntil); globalLockedUntil > 0 {
-			time.Sleep(time.Until(time.Unix(0, globalLockedUntil)))
-			atomic.StoreInt64(q.globalLockedUntil, 0)
+		if globalUnlockedUntil := atomic.LoadInt64(q.globalLockedUntil); globalUnlockedUntil > 0 {
+			if d := time.Until(time.Unix(0, globalUnlockedUntil)); d > 0 {
+				time.Sleep(d)
+			}
+			_ = atomic.CompareAndSwapInt64(q.globalLockedUntil, globalUnlockedUntil, 0)
 		}
 
 		if ch.lockerFun != nil {
