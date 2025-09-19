@@ -104,6 +104,7 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 }
 
 // Acquire will request a slot from the ratelimit and sleep until there is one available
+// NOTE: This function does not support concurrent calls!
 func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 	b.inTransitLock.Lock()
 	if b.inTransit >= b.limit {
@@ -131,16 +132,16 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 		b.inTransitLock.Unlock()
 	}
 
-	b.lock.Lock()
-	defer b.lock.Unlock()
-
 	for {
+		b.lock.Lock()
 		now := time.Now()
 		if !b.isRatelimited(now) {
+			// b.lock will be unlocked after decrementing remaining
 			break
 		}
-
 		sleepDuration := b.increaseAt.Sub(now)
+		b.lock.Unlock()
+
 		if sleepDuration > 0 {
 			logger.WithFields(logrus.Fields{
 				"bucket":        b.bucket,
@@ -159,6 +160,7 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 	}
 
 	b.remaining--
+	b.lock.Unlock()
 	return nil
 }
 
