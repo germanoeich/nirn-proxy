@@ -408,6 +408,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		ch.Lock()
 		if ch.lockerFun != nil {
 			ch.lockerFun(item)
+			ch.Unlock()
 			continue
 		}
 		ch.Unlock()
