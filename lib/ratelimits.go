@@ -151,6 +151,7 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 
 			select {
 			case <-ctx.Done():
+				b.Release()
 				return ctx.Err()
 			case <-time.After(sleepDuration):
 			}
