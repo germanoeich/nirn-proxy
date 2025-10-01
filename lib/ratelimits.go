@@ -250,7 +250,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 		}
 
 		b.limit = limit
-		b.remaining = min(b.remaining, b.limit)
+		b.remaining = min(b.remaining, limit)
 	}
 
 	if b.fixedWindow {
