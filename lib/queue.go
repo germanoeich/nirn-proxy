@@ -28,7 +28,7 @@ type QueueChannel struct {
 	sync.Mutex
 	ch        chan *QueueItem
 	lastUsed  time.Time
-	ratelimit *BucketRateLimit
+	ratelimit BucketRateLimit
 	lockerFun func(item *QueueItem)
 }
 
@@ -193,7 +193,7 @@ func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChann
 		ch = &QueueChannel{
 			ch:        make(chan *QueueItem, q.bufferSize),
 			lastUsed:  t,
-			ratelimit: nil,
+			ratelimit: NewBucketRatelimit(path, q.identifier),
 		}
 		q.queues[pathHash] = ch
 		// It's important that we only have 1 goroutine per channel
@@ -298,11 +298,7 @@ func isInteraction(url string) bool {
 }
 
 func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *QueueChannel, path string, pathHash uint64) {
-	// This is fine to do as if ch.ratelimit is nil, then we have sole access to the RequestQueue resources, so there
-	// is no need for a lock
-	if ch.ratelimit != nil {
-		defer ch.ratelimit.Release()
-	}
+	defer ch.ratelimit.Release()
 
 	resp, err := q.processor(ctx, item)
 	if err != nil {
@@ -333,14 +329,7 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 	item.doneChan <- resp
 
 	if bucket != "" {
-		if ch.ratelimit == nil {
-			// We can safely do this as it is ensured that if ch.ratelimit is not set, we will always
-			// make sequential requests and not concurrent ones. The first request that gets a ratelimit bucket
-			// will set the ratelimit and it wont be set back to nil afterwards
-			ch.ratelimit = NewBucketRatelimit(remaining, limit, resetAt, resetAfter, bucket, path, q.identifier)
-		} else {
-			ch.ratelimit.Update(bucket, remaining, limit, resetAt, resetAfter)
-		}
+		ch.ratelimit.Update(bucket, remaining, limit, resetAt, resetAfter)
 	}
 
 	if resp.StatusCode == 429 && scope != "shared" {
@@ -425,11 +414,9 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		}
 		_ = item.Req.Body.Close()
 
-		if ch.ratelimit != nil {
-			if err = ch.ratelimit.Acquire(ctx); err != nil {
-				item.errChan <- err
-				continue
-			}
+		if err = ch.ratelimit.Acquire(ctx); err != nil {
+			item.errChan <- err
+			continue
 		}
 
 		// We don't have the initial headers, so we do the requests sequentially, which should
@@ -438,7 +425,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		// which should be fine
 		//
 		// TODO: Consider if its worth hard coding which routes will never have a bucket
-		if ch.ratelimit == nil || !allowConcurrentRequests {
+		if ch.ratelimit.unknown || !allowConcurrentRequests {
 			item.doRequest(ctx, q, ch, path, pathHash)
 		} else {
 			go item.doRequest(ctx, q, ch, path, pathHash)

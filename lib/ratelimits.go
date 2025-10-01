@@ -49,28 +49,28 @@ type BucketRateLimit struct {
 	inTransit       int64
 	transitWaitChan chan interface{}
 
+	unknown     bool
 	outOfSync   bool
 	fixedWindow bool
 }
 
-func NewBucketRatelimit(remaining, limit int64, resetAt, resetAfter float64, bucket, path, identifier string) *BucketRateLimit {
-	period, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
-
-	return &BucketRateLimit{
-		bucket:      bucket,
-		path:        path,
-		identifier:  identifier,
-		remaining:   remaining,
-		resetAt:     resetAt,
-		limit:       limit,
-		period:      period,
-		increaseAt:  increaseAt,
-		fixedWindow: false,
+func NewBucketRatelimit(path, identifier string) BucketRateLimit {
+	return BucketRateLimit{
+		path:       path,
+		identifier: identifier,
+		limit:      1,
+		unknown:    true,
 	}
 }
 
 // Note: this MUST be called from a locked state
 func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
+	if b.unknown {
+		// Don't do any waiting logic as we don't have any information on the bucket,
+		// just do the request immediately
+		return false
+	}
+
 	// If we are out of sync, we shouldn't slide the window along, as we will be off due to
 	// network latency.
 	// The second part of this 'if' is to account for some cases where there can be a race
@@ -184,6 +184,21 @@ func (b *BucketRateLimit) Release() {
 func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt, resetAfter float64) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
+
+	if b.unknown {
+		period, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
+
+		b.bucket = bucket
+		b.period = period
+		b.resetAt = resetAt
+		b.increaseAt = increaseAt
+		b.remaining = remaining
+		b.limit = limit
+		b.outOfSync = false
+		b.fixedWindow = false
+		b.unknown = false
+		return
+	}
 
 	if resetAt < b.resetAt {
 		// Old ratelimit information, ignore
