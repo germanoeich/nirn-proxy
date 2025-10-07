@@ -67,7 +67,8 @@ func NewBucketRatelimit(path, identifier string) BucketRateLimit {
 func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 	if b.unknown {
 		// Don't do any waiting logic as we don't have any information on the bucket,
-		// just do the request immediately
+		// just do the request immediately. The first successful request will return the bucket
+		// data
 		return false
 	}
 
