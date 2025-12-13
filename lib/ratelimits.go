@@ -74,9 +74,9 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 
 	// If we are out of sync, we shouldn't slide the window along, as we will be off due to
 	// network latency.
-	// The second part of this 'if' is to account for some cases where there can be a race
-	// condition and we receive rate limit updates out of order, and we cannot update `outOfSync`
-	if now.After(b.increaseAt) || now.Equal(b.increaseAt) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
+	// The second part of this 'if' is for self-healing reasons, to account for the weird case where
+	// an error occurs and the bucket is not updated properly, becoming permanently out of sync
+	if now.After(b.increaseAt) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
 		if b.fixedWindow {
 			// Fixed windows just reset the remaining back to the limit
 			b.remaining = b.limit
@@ -185,6 +185,16 @@ func (b *BucketRateLimit) Release() {
 func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt, resetAfter float64) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
+
+	logger.WithFields(logrus.Fields{
+		"bucket":     b.bucket,
+		"path":       b.path,
+		"identifier": b.identifier,
+		"remaining":  remaining,
+		"limit":      remaining,
+		"resetAt":    resetAt,
+		"resetAfter": resetAfter,
+	}).Debug("updating bucket ratelimit")
 
 	if b.unknown {
 		period, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
