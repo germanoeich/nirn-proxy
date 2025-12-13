@@ -63,7 +63,7 @@ func NewBucketRatelimit(path, identifier string) BucketRateLimit {
 	}
 }
 
-// Note: this MUST be called from a locked state
+// Warning: this MUST be called from a locked state
 func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 	if b.unknown {
 		// Don't do any waiting logic as we don't have any information on the bucket,
@@ -208,7 +208,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 
 	b.bucket = bucket
 
-	if !b.outOfSync {
+	if !b.outOfSync && remaining < b.remaining+b.inTransit {
 		resetAtEq := isClose(b.resetAt, resetAt, 0.05)
 
 		if !b.fixedWindow && resetAtEq {
@@ -218,7 +218,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 				"identifier":      b.identifier,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
-			}).Debug("Bucket detected to be a fixed bucket bucket")
+			}).Debug("Bucket detected to be a fixed bucket")
 			b.fixedWindow = true
 			// Setting this here will have an effect below
 			b.outOfSync = true
