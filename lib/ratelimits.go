@@ -52,7 +52,6 @@ type BucketRateLimit struct {
 	unknown     bool
 	outOfSync   bool
 	fixedWindow bool
-	newBucket   bool
 }
 
 func NewBucketRatelimit(path, identifier string) BucketRateLimit {
@@ -209,7 +208,6 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 		b.outOfSync = false
 		b.fixedWindow = false
 		b.unknown = false
-		b.newBucket = true
 		return
 	}
 
@@ -218,8 +216,9 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 		return
 	}
 
-	if b.newBucket {
-		b.newBucket = false
+	b.bucket = bucket
+
+	if !b.outOfSync && remaining < b.remaining+b.inTransit {
 		resetAtEq := isClose(b.resetAt, resetAt, 0.05)
 
 		if !b.fixedWindow && resetAtEq {
@@ -246,14 +245,6 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 			// Setting this here will have an effect below
 			b.outOfSync = true
 		}
-	}
-
-	if bucket != b.bucket {
-		// The bucket changed, reset some of its state
-		b.bucket = bucket
-		b.newBucket = true
-		// Setting this here will have an effect below
-		b.outOfSync = true
 	}
 
 	b.resetAt = resetAt
