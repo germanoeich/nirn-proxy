@@ -218,7 +218,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 
 	b.bucket = bucket
 
-	if !b.outOfSync && remaining < b.remaining+b.inTransit {
+	if !b.outOfSync && remaining < limit - 1 {
 		resetAtEq := isClose(b.resetAt, resetAt, 0.05)
 
 		if !b.fixedWindow && resetAtEq {
