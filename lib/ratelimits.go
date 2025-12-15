@@ -197,7 +197,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 	}).Debug("updating bucket ratelimit")
 
 	if b.unknown {
-		period, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
+		period, increaseAt := calculateFixedWindow(resetAt, resetAfter)
 
 		b.bucket = bucket
 		b.period = period
@@ -206,7 +206,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 		b.remaining = remaining
 		b.limit = limit
 		b.outOfSync = false
-		b.fixedWindow = false
+		b.fixedWindow = true
 		b.unknown = false
 		return
 	}
@@ -269,7 +269,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 		//   1. The bucket is out of sync (ie, we reset the full window)
 		//   2. We receive the first usage of the bucket, which will always have correct period
 		if b.outOfSync || remaining == limit-1 {
-			period, increaseAt := calculateFixedWindow(b.resetAt, resetAfter)
+			period, increaseAt := calculateFixedWindow(resetAt, resetAfter)
 			b.period = period
 			b.increaseAt = increaseAt
 
