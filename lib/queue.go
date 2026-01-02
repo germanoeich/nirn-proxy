@@ -307,6 +307,12 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 	}
 
 	bucket, remaining, limit, resetAfter, resetAt, scope, err := parseHeaders(&resp.Header)
+	if err != nil {
+		item.errChan <- err
+		return
+	}
+
+	item.doneChan <- resp
 
 	if scope == "global" {
 		// Lock global
@@ -318,21 +324,18 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 				"resetAfter": resetAfterDuration,
 			}).Warn("Global reached, locking")
 		}
-	}
-
-	if err != nil {
-		item.errChan <- err
 		return
 	}
 
 	// TODO: Consider handling special retry case for POST /users/@me/channels
-	item.doneChan <- resp
+
+	ratelimitHit := resp.StatusCode == 429 && scope != "shared"
 
 	if bucket != "" {
-		ch.ratelimit.Update(bucket, remaining, limit, resetAt, resetAfter)
+		ch.ratelimit.Update(bucket, remaining, limit, resetAt, resetAfter, ratelimitHit)
 	}
 
-	if resp.StatusCode == 429 && scope != "shared" {
+	if ratelimitHit {
 		logger.WithFields(logrus.Fields{
 			"remaining":  remaining,
 			"resetAfter": resetAfter,
@@ -345,6 +348,7 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 			"discordBucket":  bucket,
 			"ratelimitScope": scope,
 		}).Warn("Unexpected 429")
+		return
 	}
 
 	if resp.StatusCode == 404 && strings.HasPrefix(path, "/webhooks/") && !isInteraction(item.Req.URL.String()) {
@@ -357,6 +361,7 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 		ch.Lock()
 		ch.lockerFun = return404webhook
 		ch.Unlock()
+		return
 	}
 
 	if resp.StatusCode == 401 && !isInteraction(item.Req.URL.String()) && q.queueType != NoAuth {
@@ -372,6 +377,7 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 		if EnvGet("DISABLE_401_LOCK", "false") != "true" {
 			atomic.StoreInt64(q.isTokenInvalid, 999)
 		}
+		return
 	}
 }
 

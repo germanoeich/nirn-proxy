@@ -23,7 +23,7 @@ func calculateFixedWindow(resetAt, resetAfter float64) (time.Duration, time.Time
 
 func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64) (time.Duration, time.Time) {
 	// slidePeriod = resetAfter / (limit - remaining)
-	slidePeriod := time.Duration(math.Ceil((resetAfter/float64(limit-remaining))*1_000)) * time.Millisecond
+	slidePeriod := time.Duration((resetAfter/float64(limit-remaining))*1_000) * time.Millisecond
 
 	// increaseAt = (resetAt - resetAfter) + slidePeriod
 	resetAtTime := time.Unix(0, int64(resetAt*1_000_000_000))
@@ -44,14 +44,17 @@ type BucketRateLimit struct {
 	period     time.Duration
 	increaseAt time.Time
 	resetAt    float64
+	resetAfter float64
 
 	inTransitLock   sync.Mutex
 	inTransit       int64
 	transitWaitChan chan interface{}
 
-	unknown     bool
-	outOfSync   bool
-	fixedWindow bool
+	unknown            bool
+	outOfSync          bool
+	fixedWindow        bool
+	firstSync          bool
+	ratelimitAvoidance bool
 }
 
 func NewBucketRatelimit(path, identifier string) BucketRateLimit {
@@ -72,16 +75,13 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 		return false
 	}
 
-	// If we are out of sync, we shouldn't slide the window along, as we will be off due to
-	// network latency.
-	// The second part of this 'if' is for self-healing reasons, to account for the weird case where
-	// an error occurs and the bucket is not updated properly, becoming permanently out of sync
-	if (now.After(b.increaseAt) || now.Equal(b.increaseAt)) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
-		if b.fixedWindow {
-			// Fixed windows just reset the remaining back to the limit
+	if now.After(b.increaseAt) || now.Equal(b.increaseAt) {
+		if b.fixedWindow || b.ratelimitAvoidance {
+			// Fixed windows or ratelimit avoidance just reset the remaining back to the limit
 			b.remaining = b.limit
 			b.outOfSync = true
 			b.increaseAt = now.Add(b.period)
+			b.ratelimitAvoidance = false
 
 		} else {
 			// We can slide the window along
@@ -182,7 +182,35 @@ func (b *BucketRateLimit) Release() {
 	}
 }
 
-func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt, resetAfter float64) {
+func (b *BucketRateLimit) init(bucket string, remaining, limit int64, resetAt, resetAfter float64) {
+	b.bucket = bucket
+	b.resetAt = resetAt
+	b.resetAfter = resetAfter
+	b.remaining = remaining
+	b.limit = limit
+	b.unknown = false
+	b.outOfSync = false
+	b.firstSync = true
+	b.ratelimitAvoidance = false
+
+	if limit != 1 && remaining == limit-1 {
+		// We have the perfect condition for a sliding window, so assume that for now.
+		// Turning it into a fixed bucket later is preferable, as we might never get this chance again
+		period, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
+		b.fixedWindow = false
+		b.period = period
+		b.increaseAt = increaseAt
+	} else {
+		// We can assume its a fixed bucket for now, and hope that in the future we will get
+		// the ideal condition
+		period, increaseAt := calculateFixedWindow(resetAt, resetAfter)
+		b.fixedWindow = true
+		b.period = period
+		b.increaseAt = increaseAt
+	}
+}
+
+func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt, resetAfter float64, ratelimitHit bool) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
@@ -191,35 +219,52 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 		"path":       b.path,
 		"identifier": b.identifier,
 		"remaining":  remaining,
-		"limit":      remaining,
+		"limit":      limit,
 		"resetAt":    resetAt,
 		"resetAfter": resetAfter,
+		"period":     b.period,
 	}).Debug("updating bucket ratelimit")
 
 	if b.unknown {
-		period, increaseAt := calculateFixedWindow(resetAt, resetAfter)
-
-		b.bucket = bucket
-		b.period = period
-		b.resetAt = resetAt
-		b.increaseAt = increaseAt
-		b.remaining = remaining
-		b.limit = limit
-		b.outOfSync = false
-		b.fixedWindow = true
-		b.unknown = false
+		b.init(bucket, remaining, limit, resetAt, resetAfter)
 		return
 	}
 
-	if resetAt < b.resetAt {
+	if resetAt-resetAfter < b.resetAt-b.resetAfter {
 		// Old ratelimit information, ignore
 		return
 	}
 
-	b.bucket = bucket
+	if b.bucket != bucket {
+		logger.WithFields(logrus.Fields{
+			"oldBucket":     b.bucket,
+			"newBucket":     bucket,
+			"path":          b.path,
+			"identifier":    b.identifier,
+			"oldLimit":      b.limit,
+			"oldResetAt":    b.resetAt,
+			"oldResetAfter": b.resetAfter,
+			"newLimit":      limit,
+			"newResetAt":    resetAt,
+			"newResetAfter": resetAfter,
+		}).Warn("Bucket for route changed. There might be a slight increase in 429s")
 
-	if !b.outOfSync && remaining < limit - 1 {
+		b.init(bucket, remaining, limit, resetAt, resetAfter)
+		return
+	}
+
+	if ratelimitHit {
+		// During ratelimit avoidance, we will treat the bucket as fixed
+		// bucket and wait for it to fill up completely
+		b.ratelimitAvoidance = true
+		b.increaseAt = time.Unix(0, int64(resetAt*1_000_000_000))
+		b.remaining = 0
+		return
+	}
+
+	if b.firstSync && remaining > 0 && remaining != limit-1 {
 		resetAtEq := isClose(b.resetAt, resetAt, 0.05)
+		b.firstSync = false
 
 		if !b.fixedWindow && resetAtEq {
 			logger.WithFields(logrus.Fields{
@@ -228,7 +273,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 				"identifier":      b.identifier,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
-			}).Debug("Bucket detected to be a fixed bucket")
+			}).Info("Bucket detected to be a fixed bucket")
 			b.fixedWindow = true
 			// Setting this here will have an effect below
 			b.outOfSync = true
@@ -240,7 +285,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 				"identifier":      b.identifier,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
-			}).Debug("Bucket stopped being a fixed bucket")
+			}).Debug("Bucket detected to be a sliding bucket")
 			b.fixedWindow = false
 			// Setting this here will have an effect below
 			b.outOfSync = true
@@ -248,56 +293,21 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 	}
 
 	b.resetAt = resetAt
+	b.resetAfter = resetAfter
 
-	if b.limit != limit {
-		if b.limit > limit {
-			logger.WithFields(logrus.Fields{
-				"bucket":     b.bucket,
-				"path":       b.path,
-				"identifier": b.identifier,
-				"newLimit":   limit,
-				"oldLimit":   b.limit,
-			}).Warn("Bucket decreased its limit. It is possible you will see a small increase in 429s")
-		}
-
-		b.limit = limit
-		b.remaining = min(b.remaining, limit)
-	}
-
-	if b.fixedWindow {
-		// We want to update the period only, and only if:
-		//   1. The bucket is out of sync (ie, we reset the full window)
-		//   2. We receive the first usage of the bucket, which will always have correct period
-		if b.outOfSync || remaining == limit-1 {
-			period, increaseAt := calculateFixedWindow(resetAt, resetAfter)
-			b.period = period
-			b.increaseAt = increaseAt
-
-			b.outOfSync = false
-		}
+	if !b.outOfSync {
 		return
 	}
 
-	// We want to update the slide period only, and only if:
-	//   1. The bucket is out of sync (ie, we reset the full window)
-	//   2. We receive the first usage of the bucket, which will always have the most accurate slide period
-	//   3. The slide period increased
-	//   4. The slide period greatly changed
-	//      Note: 0.3 and 0.5 are chosen arbitrarily after some testing
-	slidePeriod, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
-	if b.outOfSync || remaining == limit-1 || slidePeriod > b.period || !isClose(slidePeriod.Seconds(), b.period.Seconds(), 0.3) {
-		if !isClose(slidePeriod.Seconds(), b.period.Seconds(), 0.5) {
-			logger.WithFields(logrus.Fields{
-				"bucket":         b.bucket,
-				"path":           b.path,
-				"identifier":     b.identifier,
-				"newSlidePeriod": slidePeriod,
-				"oldSlidePeriod": b.period,
-			}).Warn("Bucket greatly changed its slide period. It is possible you will see a small increase in 429s")
-		}
-
-		b.outOfSync = false
-		b.period = slidePeriod
+	if b.fixedWindow {
+		period, increaseAt := calculateFixedWindow(resetAt, resetAfter)
+		b.period = period
+		b.increaseAt = increaseAt
+	} else {
+		period, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
+		b.period = period
 		b.increaseAt = increaseAt
 	}
+
+	b.outOfSync = false
 }
