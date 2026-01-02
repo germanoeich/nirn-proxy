@@ -273,7 +273,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 				"identifier":      b.identifier,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
-			}).Info("Bucket detected to be a fixed bucket")
+			}).Debug("Bucket detected to be a fixed bucket")
 			b.fixedWindow = true
 			// Setting this here will have an effect below
 			b.outOfSync = true
