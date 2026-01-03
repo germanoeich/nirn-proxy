@@ -8,11 +8,11 @@ import (
 )
 
 const (
-	MajorUnknown = "unk"
-	MajorChannels = "channels"
-	MajorGuilds = "guilds"
-	MajorWebhooks = "webhooks"
-	MajorInvites = "invites"
+	MajorUnknown      = "unk"
+	MajorChannels     = "channels"
+	MajorGuilds       = "guilds"
+	MajorWebhooks     = "webhooks"
+	MajorInvites      = "invites"
 	MajorInteractions = "interactions"
 )
 
@@ -48,7 +48,9 @@ func GetMetricsPath(route string) string {
 	}
 
 	for _, part := range parts {
-		if part == "" { continue }
+		if part == "" {
+			continue
+		}
 		if IsNumericInput(part) {
 			path += "/!"
 		} else {
@@ -72,7 +74,7 @@ func GetOptimisticBucketPath(url string, method string) string {
 		cleanUrl = strings.ReplaceAll(cleanUrl, "/api/v", "")
 		l := len(cleanUrl)
 		i := strings.Index(cleanUrl, "/")
-		cleanUrl = cleanUrl[i+1:l]
+		cleanUrl = cleanUrl[i+1 : l]
 	} else {
 		// Handle unversioned endpoints
 		cleanUrl = strings.ReplaceAll(cleanUrl, "/api/", "")
@@ -105,10 +107,6 @@ func GetOptimisticBucketPath(url string, method string) string {
 		bucket.WriteString("/!")
 		currMajor = MajorInvites
 	case MajorGuilds:
-		// guilds/:guildId/channels share the same bucket for all guilds
-		if numParts == 3 && parts[2] == "channels" {
-			return "/" + MajorGuilds + "/!/channels"
-		}
 		fallthrough
 	case MajorInteractions:
 		if numParts == 4 && parts[3] == "callback" {
@@ -133,7 +131,7 @@ func GetOptimisticBucketPath(url string, method string) string {
 	for idx, part := range parts[2:] {
 		if IsSnowflake(part) {
 			// Custom rule for messages older than 14d
-			if currMajor == MajorChannels && parts[idx - 1] == "messages" && method == "DELETE" {
+			if currMajor == MajorChannels && parts[idx-1] == "messages" && method == "DELETE" {
 				createdAt, _ := GetSnowflakeCreatedAt(part)
 				if createdAt.Before(time.Now().Add(-1 * 14 * 24 * time.Hour)) {
 					bucket.WriteString("/!14dmsg")
@@ -178,12 +176,11 @@ func GetOptimisticBucketPath(url string, method string) string {
 				} else {
 					interactionId = strings.Split(string(decodedPart), ":")[1]
 				}
-			
+
 				bucket.WriteByte('/')
 				bucket.WriteString(interactionId)
 				continue
 			}
-
 
 			// Strip webhook tokens and interaction tokens
 			if (currMajor == MajorWebhooks || currMajor == MajorInteractions) && len(part) >= 64 {
