@@ -236,6 +236,24 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 	}
 
 	if b.bucket != bucket {
+		if (limit != b.limit) {
+			logger.WithFields(logrus.Fields{
+				"oldBucket":     b.bucket,
+				"newBucket":     bucket,
+				"path":          b.path,
+				"identifier":    b.identifier,
+				"oldLimit":      b.limit,
+				"oldResetAt":    b.resetAt,
+				"oldResetAfter": b.resetAfter,
+				"newLimit":      limit,
+				"newResetAt":    resetAt,
+				"newResetAfter": resetAfter,
+			}).Warn("Bucket for route changed. There might be a slight increase in 429s")
+
+			b.init(bucket, remaining, limit, resetAt, resetAfter)
+			return
+		}
+		
 		logger.WithFields(logrus.Fields{
 			"oldBucket":     b.bucket,
 			"newBucket":     bucket,
@@ -247,10 +265,9 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 			"newLimit":      limit,
 			"newResetAt":    resetAt,
 			"newResetAfter": resetAfter,
-		}).Warn("Bucket for route changed. There might be a slight increase in 429s")
+		}).Info("Bucket hash changed")
 
-		b.init(bucket, remaining, limit, resetAt, resetAfter)
-		return
+		b.bucket = bucket
 	}
 
 	if ratelimitHit {
