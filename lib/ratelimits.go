@@ -75,7 +75,7 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 		return false
 	}
 
-	if now.After(b.increaseAt) {
+	if now.After(b.increaseAt) || now.Equal(b.increaseAt) {
 		if b.fixedWindow || b.ratelimitAvoidance {
 			// Fixed windows or ratelimit avoidance just reset the remaining back to the limit
 			b.remaining = b.limit
