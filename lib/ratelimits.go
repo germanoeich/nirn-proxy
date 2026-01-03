@@ -236,7 +236,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 	}
 
 	if b.bucket != bucket {
-		if (limit != b.limit) {
+		if limit != b.limit {
 			logger.WithFields(logrus.Fields{
 				"oldBucket":     b.bucket,
 				"newBucket":     bucket,
