@@ -75,11 +75,7 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 		return false
 	}
 
-	// If we are out of sync, we shouldn't slide the window along, as we will be off due to
-	// network latency.
-	// The second part of this 'if' is for self-healing purposes, to account for the weird case where
-	// an error occurs and the bucket is not updated properly, becoming permanently out of sync
-	if now.After(b.increaseAt) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
+	if now.After(b.increaseAt) {
 		if b.fixedWindow || b.ratelimitAvoidance {
 			// Fixed windows or ratelimit avoidance just reset the remaining back to the limit
 			b.remaining = b.limit
@@ -285,9 +281,8 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 		// During ratelimit avoidance, we will treat the bucket as fixed
 		// bucket and wait for it to fill up completely
 		b.ratelimitAvoidance = true
-		period, increaseAt := calculateFixedWindow(resetAt, resetAfter)
+		_, increaseAt := calculateFixedWindow(resetAt, resetAfter)
 		b.increaseAt = increaseAt
-		b.period = period
 		b.remaining = 0
 		return
 	}
