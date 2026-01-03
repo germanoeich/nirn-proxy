@@ -23,7 +23,7 @@ func calculateFixedWindow(resetAt, resetAfter float64) (time.Duration, time.Time
 
 func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64) (time.Duration, time.Time) {
 	// slidePeriod = resetAfter / (limit - remaining)
-	slidePeriod := time.Duration((resetAfter/float64(limit-remaining))*1_000) * time.Millisecond
+	slidePeriod := time.Duration(math.Ceil((resetAfter/float64(limit-remaining))*1_000)) * time.Millisecond
 
 	// increaseAt = (resetAt - resetAfter) + slidePeriod
 	resetAtTime := time.Unix(0, int64(resetAt*1_000_000_000))
