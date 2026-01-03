@@ -248,7 +248,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 				"newLimit":      limit,
 				"newResetAt":    resetAt,
 				"newResetAfter": resetAfter,
-			}).Warn("Bucket for route changed. There might be a slight increase in 429s")
+			}).Warn("bucket for route changed. There might be a slight increase in 429s")
 
 			b.init(bucket, remaining, limit, resetAt, resetAfter)
 			return
@@ -265,7 +265,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 			"newLimit":      limit,
 			"newResetAt":    resetAt,
 			"newResetAfter": resetAfter,
-		}).Info("Bucket hash changed")
+		}).Debug("bucket hash changed")
 
 		b.bucket = bucket
 	}
@@ -290,7 +290,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 				"identifier":      b.identifier,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
-			}).Debug("Bucket detected to be a fixed bucket")
+			}).Debug("bucket detected to be a fixed bucket")
 			b.fixedWindow = true
 			// Setting this here will have an effect below
 			b.outOfSync = true
@@ -302,7 +302,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 				"identifier":      b.identifier,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
-			}).Debug("Bucket detected to be a sliding bucket")
+			}).Debug("bucket detected to be a sliding bucket")
 			b.fixedWindow = false
 			// Setting this here will have an effect below
 			b.outOfSync = true
