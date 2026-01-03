@@ -75,7 +75,11 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 		return false
 	}
 
-	if now.After(b.increaseAt) || now.Equal(b.increaseAt) {
+	// If we are out of sync, we shouldn't slide the window along, as we will be off due to
+	// network latency.
+	// The second part of this 'if' is for self-healing purposes, to account for the weird case where
+	// an error occurs and the bucket is not updated properly, becoming permanently out of sync
+	if (now.After(b.increaseAt) || now.Equal(b.increaseAt)) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
 		if b.fixedWindow || b.ratelimitAvoidance {
 			// Fixed windows or ratelimit avoidance just reset the remaining back to the limit
 			b.remaining = b.limit
@@ -142,6 +146,13 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 		}
 		sleepDuration := b.increaseAt.Sub(now)
 		b.lock.Unlock()
+
+		select {
+		case <-ctx.Done():
+			b.Release()
+			return ctx.Err()
+		default:
+		}
 
 		if sleepDuration > 0 {
 			logger.WithFields(logrus.Fields{
@@ -274,12 +285,14 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 		// During ratelimit avoidance, we will treat the bucket as fixed
 		// bucket and wait for it to fill up completely
 		b.ratelimitAvoidance = true
-		b.increaseAt = time.Unix(0, int64(resetAt*1_000_000_000))
+		period, increaseAt := calculateFixedWindow(resetAt, resetAfter)
+		b.increaseAt = increaseAt
+		b.period = period
 		b.remaining = 0
 		return
 	}
 
-	if b.firstSync && remaining > 0 && remaining != limit-1 {
+	if !b.outOfSync && b.firstSync && remaining > 0 && remaining != limit-1 {
 		resetAtEq := isClose(b.resetAt, resetAt, 0.05)
 		b.firstSync = false
 
