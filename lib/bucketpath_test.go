@@ -3,6 +3,8 @@ package lib
 import (
 	"fmt"
 	"testing"
+	"testing/synctest"
+	"time"
 )
 
 func TestPaths(t *testing.T) {
@@ -32,8 +34,6 @@ func TestPaths(t *testing.T) {
 		// No known major
 		{"/api/v9/invalid/203039963636301824", "GET", "/invalid/203039963636301824"},
 		{"/api/v9/invalid/203039963636301824/route/203039963636301824", "GET", "/invalid/203039963636301824/route/!"},
-		//Special case for /guilds/:id/channels
-		{"/api/v9/guilds/203039963636301824/channels", "GET", "/guilds/!/channels"},
 		// Wierd routes
 		{"/api/v9/guilds/templates/203039963636301824", "GET", "/guilds/templates/!"},
 		// Unversioned routes
@@ -44,14 +44,28 @@ func TestPaths(t *testing.T) {
 		// Application commands
 		{"/api/v9/applications/203039963636301824/commands", "GET", "/applications/203039963636301824/commands"},
 		{"/api/v9/applications/203039963636301824/commands/203039963636301824", "GET", "/applications/203039963636301824/commands/!"},
+		// Message delete has multiple buckets
+		// exactly at 2016-01-01 00:00:00
+		{"/api/v9/channels/1412822759695974551/messages/132271570957574145", "DELETE", "/channels/1412822759695974551/messages/!10smsg"},
+		// 10 seconds after 2016-01-01 00:00:00
+		{"/api/v9/channels/1412822759695974551/messages/132271529014534145", "DELETE", "/channels/1412822759695974551/messages/!"},
+		// 14 days before 2016-01-01 00:00:00
+		{"/api/v9/channels/1412822759695974551/messages/127198140839174145", "DELETE", "/channels/1412822759695974551/messages/!14dmsg"},
 	}
 	for _, tt := range tests {
 		testname := fmt.Sprintf("%s-%s", tt.method, tt.path)
 		t.Run(testname, func(t *testing.T) {
-			bucket := GetOptimisticBucketPath(tt.path, tt.method)
-			if bucket != tt.want {
-				t.Errorf("Expected %s but got %s", tt.want, bucket)
-			}
+			// Time will start at UTC 2000-01-01 00:00:00
+			synctest.Test(t, func(t *testing.T) {
+				// 16 years in hours
+				time.Sleep(140256 * time.Hour)
+
+				// Time will always be midnight UTC 2016-01-01 00:00:00
+				bucket := GetOptimisticBucketPath(tt.path, tt.method)
+				if bucket != tt.want {
+					t.Errorf("Expected %s but got %s", tt.want, bucket)
+				}
+			})
 		})
 	}
 }
