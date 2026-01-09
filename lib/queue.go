@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,39 +17,89 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// A pool of bucketsContextManager
+var bucketsContextManagerPool = sync.Pool{
+	New: func() interface{} {
+		return &bucketsContextManager{
+			buckets: make([]*Bucket, 0, 1),
+		}
+	},
+}
+
+type bucketsContextManager struct {
+	buckets []*Bucket
+}
+
+func (b *bucketsContextManager) Acquire(ctx context.Context) error {
+	// We count till what position we reach instead of using a slice to prevent allocations
+	var acquiredBucketsCount int
+	var err error
+
+	for _, bucket := range b.buckets {
+		err = bucket.Acquire(ctx)
+		if err != nil {
+			break
+		}
+
+		acquiredBucketsCount++
+	}
+
+	if err != nil {
+		// Make sure we release all the buckets we have already acquired before the error
+		for idx, bucket := range b.buckets {
+			if idx >= acquiredBucketsCount {
+				break
+			}
+
+			bucket.Release()
+		}
+	}
+
+	return err
+}
+
+func (b *bucketsContextManager) Release() {
+	for _, bucket := range b.buckets {
+		bucket.Release()
+	}
+}
+
+type ItemProcessFunction func(ctx context.Context, item *QueueItem) (*http.Response, error)
+
 type QueueItem struct {
 	Req      *http.Request
 	Res      *http.ResponseWriter
-	ReqBody  []byte
 	doneChan chan *http.Response
 	errChan  chan error
+	ReqBody  []byte
 }
 
 type QueueChannel struct {
-	sync.Mutex
-	ch        chan *QueueItem
 	lastUsed  time.Time
-	ratelimit BucketRateLimit
+	ch        chan *QueueItem
 	lockerFun func(item *QueueItem)
+	buckets   []string
+	sync.Mutex
 }
 
 type RequestQueue struct {
-	sync.Mutex
+	globalBucket      leakybucket.Bucket
 	globalLockedUntil *int64
 	// bucket path hash as key
-	queues       map[uint64]*QueueChannel
-	processor    func(ctx context.Context, item *QueueItem) (*http.Response, error)
-	globalBucket leakybucket.Bucket
-	// bufferSize Defines the size of the request channel buffer for each bucket
-	bufferSize     int
+	queues         map[uint64]*QueueChannel
+	buckets        map[string]*Bucket
+	processor      ItemProcessFunction
 	user           *BotUserResponse
-	identifier     string
 	isTokenInvalid *int64
-	botLimit       uint
-	queueType      QueueType
+	identifier     string
+	// bufferSize Defines the size of the request channel buffer for each bucket
+	bufferSize int
+	botLimit   uint
+	queueType  QueueType
+	sync.Mutex
 }
 
-func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http.Response, error), token string, bufferSize int) (*RequestQueue, error) {
+func NewRequestQueue(processor ItemProcessFunction, token string, bufferSize int) (*RequestQueue, error) {
 	queueType := NoAuth
 	var user *BotUserResponse
 	var err error
@@ -71,6 +122,7 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 			*invalid = 999
 			return &RequestQueue{
 				queues:            make(map[uint64]*QueueChannel),
+				buckets:           make(map[string]*Bucket),
 				processor:         processor,
 				globalBucket:      globalBucket,
 				globalLockedUntil: new(int64),
@@ -97,6 +149,7 @@ func NewRequestQueue(processor func(ctx context.Context, item *QueueItem) (*http
 
 	ret := &RequestQueue{
 		queues:            make(map[uint64]*QueueChannel),
+		buckets:           make(map[string]*Bucket),
 		processor:         processor,
 		globalBucket:      globalBucket,
 		globalLockedUntil: new(int64),
@@ -128,10 +181,10 @@ func (q *RequestQueue) destroy() {
 	}
 }
 
-func (q *RequestQueue) sweep() {
+func (q *RequestQueue) sweepQueues() {
 	q.Lock()
 	defer q.Unlock()
-	logger.Info("Sweep start")
+	logger.Info("Queues Sweep start")
 	sweptEntries := 0
 	for key, val := range q.queues {
 		if time.Since(val.lastUsed) > 10*time.Minute {
@@ -140,14 +193,36 @@ func (q *RequestQueue) sweep() {
 			sweptEntries++
 		}
 	}
-	logger.WithFields(logrus.Fields{"sweptEntries": sweptEntries}).Info("Finished sweep")
+	logger.WithFields(logrus.Fields{"sweptEntries": sweptEntries}).Info("Finished queues sweep")
+}
+
+func (q *RequestQueue) sweepBuckets() {
+	q.Lock()
+	defer q.Unlock()
+	logger.Debug("Buckets sweep start")
+	sweptEntries := 0
+	for key, val := range q.buckets {
+		// This is technically a data race, but we are looking for buckets that are insanely
+		// unused, so we can afford the data race
+		if val.inTransit == 0 && time.Since(val.serverUpdateAt) > 3*val.period {
+			delete(q.buckets, key)
+			sweptEntries++
+		}
+	}
+	logger.WithFields(logrus.Fields{"sweptEntries": sweptEntries}).Debug("Finished buckets sweep")
 }
 
 func (q *RequestQueue) tickSweep() {
 	t := time.NewTicker(5 * time.Minute)
+	t2 := time.NewTicker(30 * time.Second)
 
-	for range t.C {
-		q.sweep()
+	for {
+		select {
+		case <-t.C:
+			q.sweepQueues()
+		case <-t2.C:
+			q.sweepBuckets()
+		}
 	}
 }
 
@@ -169,12 +244,12 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 		"method": req.Method,
 	}).Trace("Inbound request")
 
-	ch := q.getQueueChannel(path, req.Method, pathHash)
+	ch := q.getQueueChannel(path, pathHash)
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
 
-	safeSend(ch, &QueueItem{req, res, nil, doneChan, errChan})
+	safeSend(ch, &QueueItem{Req: req, Res: res, errChan: errChan, doneChan: doneChan})
 
 	select {
 	case <-doneChan:
@@ -184,16 +259,16 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 	}
 }
 
-func (q *RequestQueue) getQueueChannel(path, method string, pathHash uint64) *QueueChannel {
+func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChannel {
 	t := time.Now()
 	q.Lock()
 	defer q.Unlock()
 	ch, ok := q.queues[pathHash]
 	if !ok {
 		ch = &QueueChannel{
-			ch:        make(chan *QueueItem, q.bufferSize),
-			lastUsed:  t,
-			ratelimit: NewBucketRatelimit(path, method, q.identifier),
+			ch:       make(chan *QueueItem, q.bufferSize),
+			buckets:  make([]string, 0, 1),
+			lastUsed: t,
 		}
 		q.queues[pathHash] = ch
 		// It's important that we only have 1 goroutine per channel
@@ -297,8 +372,46 @@ func isInteraction(url string) bool {
 	return false
 }
 
-func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *QueueChannel, path string, pathHash uint64) {
-	defer ch.ratelimit.Release()
+func (q *RequestQueue) getBucketsContextManager(ch *QueueChannel) *bucketsContextManager {
+	q.Lock()
+	defer q.Unlock()
+	ch.Lock()
+	defer ch.Unlock()
+
+	if len(ch.buckets) == 0 {
+		return nil
+	}
+
+	contextManager := bucketsContextManagerPool.Get().(*bucketsContextManager)
+	contextManager.buckets = contextManager.buckets[:0]
+
+	for idx := 0; idx < len(ch.buckets); {
+		bucket, ok := q.buckets[ch.buckets[idx]]
+		if ok {
+			contextManager.buckets = append(contextManager.buckets, bucket)
+			idx++
+			continue
+		}
+
+		// The bucket no longer exists, so remove it from the channel slice
+		ch.buckets = append(ch.buckets[:idx], ch.buckets[idx+1:]...)
+	}
+
+	if len(contextManager.buckets) == 0 {
+		bucketsContextManagerPool.Put(contextManager)
+		return nil
+	}
+
+	return contextManager
+}
+
+func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *QueueChannel, buckets *bucketsContextManager, path, pathHash string) {
+	if buckets != nil {
+		defer func() {
+			buckets.Release()
+			bucketsContextManagerPool.Put(buckets)
+		}()
+	}
 
 	resp, err := q.processor(ctx, item)
 	if err != nil {
@@ -306,7 +419,7 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 		return
 	}
 
-	bucket, remaining, limit, resetAfter, resetAt, scope, err := parseHeaders(&resp.Header)
+	bucketHash, remaining, limit, resetAfter, resetAt, scope, err := parseHeaders(&resp.Header)
 	if err != nil {
 		item.errChan <- err
 		return
@@ -331,8 +444,59 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 
 	ratelimitHit := resp.StatusCode == 429
 
-	if bucket != "" || ratelimitHit {
-		ch.ratelimit.Update(bucket, remaining, limit, resetAt, resetAfter, ratelimitHit)
+	if bucketHash != "" || ratelimitHit {
+		if bucketHash == "" {
+			// We might have hit a Cloudflare 429, so we create a special bucket for that
+			bucketHash = "route"
+		}
+
+		// Bucket hashes are per path hash
+		bucketHash += ":" + pathHash
+
+		q.Lock()
+		bucket, ok := q.buckets[bucketHash]
+		if !ok {
+			logger.WithFields(logrus.Fields{
+				"bucket":     bucketHash,
+				"remaining":  remaining,
+				"limit":      limit,
+				"resetAt":    resetAt,
+				"resetAfter": resetAfter,
+				"identifier": q.identifier,
+				"route":      item.Req.URL.String(),
+				"method":     item.Req.Method,
+			}).Debug("creating new bucket")
+
+			q.buckets[bucketHash] = NewBucket(bucketHash, remaining, limit, resetAt, resetAfter)
+		} else {
+			logger.WithFields(logrus.Fields{
+				"bucket":     bucketHash,
+				"remaining":  remaining,
+				"limit":      limit,
+				"resetAt":    resetAt,
+				"resetAfter": resetAfter,
+				"identifier": q.identifier,
+				"route":      item.Req.URL.String(),
+				"method":     item.Req.Method,
+			}).Debug("updating existing bucket")
+
+			bucket.Update(remaining, limit, resetAt, resetAfter, ratelimitHit)
+		}
+		q.Unlock()
+
+		ch.Lock()
+		if !slices.Contains(ch.buckets, bucketHash) {
+			logger.WithFields(logrus.Fields{
+				"bucket":     bucketHash,
+				"identifier": q.identifier,
+				"route":      item.Req.URL.String(),
+				"method":     item.Req.Method,
+			}).Debug("linking new bucket to route")
+
+			ch.buckets = append(ch.buckets, bucketHash)
+		}
+		ch.Unlock()
+
 	}
 
 	if ratelimitHit && scope != "shared" {
@@ -340,12 +504,12 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 			"remaining":  remaining,
 			"resetAfter": resetAfter,
 			"bucket":     path,
+			"identifier": q.identifier,
 			"route":      item.Req.URL.String(),
 			"method":     item.Req.Method,
-			"scope":      scope,
 			"pathHash":   pathHash,
 			// TODO: Remove this when 429s are not a problem anymore
-			"discordBucket":  bucket,
+			"discordBucket":  bucketHash,
 			"ratelimitScope": scope,
 		}).Warn("Unexpected 429")
 		return
@@ -381,9 +545,11 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 	}
 }
 
-func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64) {
+func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHashInt uint64) {
 	// This function has 1 goroutine for each bucket path
 	// Locking here is not needed
+
+	pathHash := strconv.FormatUint(pathHashInt, 10)
 
 	for item := range ch.ch {
 		ctx := context.WithValue(item.Req.Context(), "identifier", q.identifier)
@@ -420,9 +586,14 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		}
 		_ = item.Req.Body.Close()
 
-		if err = ch.ratelimit.Acquire(ctx); err != nil {
-			item.errChan <- err
-			continue
+		buckets := q.getBucketsContextManager(ch)
+
+		if buckets != nil {
+			if err = buckets.Acquire(ctx); err != nil {
+				bucketsContextManagerPool.Put(buckets)
+				item.errChan <- err
+				continue
+			}
 		}
 
 		// We don't have the initial headers, so we do the requests sequentially, which should
@@ -431,10 +602,10 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 		// which should be fine
 		//
 		// TODO: Consider if its worth hard coding which routes will never have a bucket
-		if ch.ratelimit.unknown || !allowConcurrentRequests {
-			item.doRequest(ctx, q, ch, path, pathHash)
+		if buckets == nil || !allowConcurrentRequests {
+			q.doRequest(ctx, item, ch, buckets, path, pathHash)
 		} else {
-			go item.doRequest(ctx, q, ch, path, pathHash)
+			go q.doRequest(ctx, item, ch, buckets, path, pathHash)
 		}
 	}
 }

@@ -33,51 +33,66 @@ func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64)
 	return slidePeriod, increaseAt
 }
 
-// BucketRateLimit is a sliding window ratelimit implementation
-type BucketRateLimit struct {
-	identifier string
-	method     string
-	path       string
-	bucket     string
-	lock       sync.Mutex
-	remaining  int64
-	limit      int64
-	period     time.Duration
-	increaseAt time.Time
-	resetAt    float64
-	resetAfter float64
-
-	inTransitLock   sync.Mutex
-	inTransit       int64
+// Bucket is a Discord bucket ratelimiter
+type Bucket struct {
+	increaseAt      time.Time
+	serverUpdateAt  time.Time
 	transitWaitChan chan interface{}
 
-	unknown            bool
+	bucket    string
+	remaining int64
+	limit     int64
+	period    time.Duration
+	resetAt   float64
+	inTransit int64
+
+	stateLock     sync.Mutex
+	inTransitLock sync.Mutex
+	acquireLock   sync.Mutex
+
 	outOfSync          bool
 	fixedWindow        bool
-	firstSync          bool
+	firstSeen          bool
 	ratelimitAvoidance bool
 }
 
-func NewBucketRatelimit(path, method, identifier string) BucketRateLimit {
-	return BucketRateLimit{
-		path:       path,
-		method:     method,
-		identifier: identifier,
-		limit:      1,
-		unknown:    true,
+func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float64) *Bucket {
+	var period time.Duration
+	var increaseAt time.Time
+	var fixedWindow bool
+
+	if limit != 1 && remaining == limit-1 {
+		// We have the perfect condition for a sliding window, so assume that for now.
+		// Turning it into a fixed bucket later is preferable, as we might never get this chance again
+		period, increaseAt = calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
+		fixedWindow = false
+	} else {
+		// We can assume its a fixed bucket for now, and hope that in the future we will get
+		// the ideal condition
+		period, increaseAt = calculateFixedWindow(resetAt, resetAfter)
+		fixedWindow = true
+	}
+
+	return &Bucket{
+		bucket:      bucket,
+		remaining:   remaining,
+		limit:       limit,
+		resetAt:     resetAt,
+		period:      period,
+		increaseAt:  increaseAt,
+		fixedWindow: fixedWindow,
+		firstSeen:   true,
 	}
 }
 
 // Warning: this MUST be called from a locked state
-func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
-	if b.unknown {
-		// Don't do any waiting logic as we don't have any information on the bucket,
-		// just do the request immediately. The first successful request will return the bucket
-		// data
-		return false
-	}
-
-	if now.After(b.increaseAt) || now.Equal(b.increaseAt) {
+func (b *Bucket) isRatelimited(now time.Time) bool {
+	// If we are out of sync, we shouldn't slide the window along, as we will be off due to
+	// network latency.
+	//
+	// The second part of this 'if' is for self-healing purposes, to account for the weird case where
+	// an error occurs and the bucket is not updated properly, becoming permanently out of sync
+	if now.After(b.increaseAt) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
 		if b.fixedWindow || b.ratelimitAvoidance {
 			// Fixed windows or ratelimit avoidance just reset the remaining back to the limit
 			b.remaining = b.limit
@@ -106,9 +121,10 @@ func (b *BucketRateLimit) isRatelimited(now time.Time) bool {
 	return b.remaining <= 0
 }
 
-// Acquire will request a slot from the ratelimit and sleep until there is one available
-// NOTE: This function does not support concurrent calls!
-func (b *BucketRateLimit) Acquire(ctx context.Context) error {
+// Acquire will request a slot from the ratelimit or sleep until there is one available
+func (b *Bucket) Acquire(ctx context.Context) error {
+	b.acquireLock.Lock()
+	defer b.acquireLock.Unlock()
 	b.inTransitLock.Lock()
 	if b.inTransit >= b.limit {
 		// Buffer of 1 here to prevent deadlocks in a worst case scenario
@@ -136,14 +152,14 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 	}
 
 	for {
-		b.lock.Lock()
+		b.stateLock.Lock()
 		now := time.Now()
 		if !b.isRatelimited(now) {
 			// b.lock will be unlocked after decrementing remaining
 			break
 		}
 		sleepDuration := b.increaseAt.Sub(now)
-		b.lock.Unlock()
+		b.stateLock.Unlock()
 
 		select {
 		case <-ctx.Done():
@@ -155,8 +171,6 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 		if sleepDuration > 0 {
 			logger.WithFields(logrus.Fields{
 				"bucket":        b.bucket,
-				"path":          b.path,
-				"identifier":    b.identifier,
 				"sleepDuration": sleepDuration,
 			}).Debug("backing off to avoid hitting ratelimits")
 
@@ -169,12 +183,13 @@ func (b *BucketRateLimit) Acquire(ctx context.Context) error {
 		}
 	}
 
+	// FIXME: Consider not decrementing remaining until release and make sure the request was made
 	b.remaining--
-	b.lock.Unlock()
+	b.stateLock.Unlock()
 	return nil
 }
 
-func (b *BucketRateLimit) Release() {
+func (b *Bucket) Release() {
 	b.inTransitLock.Lock()
 	defer b.inTransitLock.Unlock()
 
@@ -191,114 +206,28 @@ func (b *BucketRateLimit) Release() {
 	}
 }
 
-func (b *BucketRateLimit) init(bucket string, remaining, limit int64, resetAt, resetAfter float64) {
-	b.bucket = bucket
-	b.resetAt = resetAt
-	b.resetAfter = resetAfter
-	b.remaining = remaining
-	b.limit = limit
-	b.unknown = false
-	b.outOfSync = false
-	b.firstSync = true
-	b.ratelimitAvoidance = false
+func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, ratelimitHit bool) {
+	resetAtTime := time.Unix(0, int64(resetAt*1_000_000_000))
+	resetAfterDuration := time.Duration(resetAfter*1_000) * time.Millisecond
+	serverUpdateAt := resetAtTime.Add(-resetAfterDuration)
 
-	if limit != 1 && remaining == limit-1 {
-		// We have the perfect condition for a sliding window, so assume that for now.
-		// Turning it into a fixed bucket later is preferable, as we might never get this chance again
-		period, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
-		b.fixedWindow = false
-		b.period = period
-		b.increaseAt = increaseAt
-	} else {
-		// We can assume its a fixed bucket for now, and hope that in the future we will get
-		// the ideal condition
-		period, increaseAt := calculateFixedWindow(resetAt, resetAfter)
-		b.fixedWindow = true
-		b.period = period
-		b.increaseAt = increaseAt
-	}
-}
+	b.stateLock.Lock()
+	defer b.stateLock.Unlock()
 
-func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt, resetAfter float64, ratelimitHit bool) {
-	b.lock.Lock()
-	defer b.lock.Unlock()
-
-	logger.WithFields(logrus.Fields{
-		"bucket":     bucket,
-		"path":       b.path,
-		"method":     b.method,
-		"identifier": b.identifier,
-		"remaining":  remaining,
-		"limit":      limit,
-		"resetAt":    resetAt,
-		"resetAfter": resetAfter,
-		"period":     b.period,
-	}).Debug("updating bucket ratelimit")
-
-	if b.unknown {
-		b.init(bucket, remaining, limit, resetAt, resetAfter)
-		return
-	}
-
-	if resetAt-resetAfter < b.resetAt-b.resetAfter {
+	if serverUpdateAt.Before(b.serverUpdateAt) {
 		// Old ratelimit information, ignore
 		return
 	}
 
-	if ratelimitHit {
-		// During ratelimit avoidance, we will treat the bucket as fixed
-		// bucket and wait for it to fill up completely
-		b.ratelimitAvoidance = true
-		_, increaseAt := calculateFixedWindow(resetAt, resetAfter)
-		b.increaseAt = increaseAt
-		b.remaining = 0
-		return
-	}
+	b.serverUpdateAt = serverUpdateAt
 
-	if b.bucket != bucket {
-		if limit != b.limit {
-			logger.WithFields(logrus.Fields{
-				"oldBucket":     b.bucket,
-				"newBucket":     bucket,
-				"path":          b.path,
-				"identifier":    b.identifier,
-				"oldLimit":      b.limit,
-				"oldResetAt":    b.resetAt,
-				"oldResetAfter": b.resetAfter,
-				"newLimit":      limit,
-				"newResetAt":    resetAt,
-				"newResetAfter": resetAfter,
-			}).Warn("bucket for route changed. There might be a slight increase in 429s")
-
-			b.init(bucket, remaining, limit, resetAt, resetAfter)
-			return
-		}
-
-		logger.WithFields(logrus.Fields{
-			"oldBucket":     b.bucket,
-			"newBucket":     bucket,
-			"path":          b.path,
-			"identifier":    b.identifier,
-			"oldLimit":      b.limit,
-			"oldResetAt":    b.resetAt,
-			"oldResetAfter": b.resetAfter,
-			"newLimit":      limit,
-			"newResetAt":    resetAt,
-			"newResetAfter": resetAfter,
-		}).Debug("bucket hash changed")
-
-		b.bucket = bucket
-	}
-
-	if !b.outOfSync && b.firstSync && remaining > 0 && remaining != limit-1 {
+	if b.firstSeen && !b.outOfSync && remaining > 0 && remaining != limit-1 {
 		resetAtEq := isClose(b.resetAt, resetAt, 0.05)
-		b.firstSync = false
+		b.firstSeen = false
 
 		if !b.fixedWindow && resetAtEq {
 			logger.WithFields(logrus.Fields{
 				"bucket":          b.bucket,
-				"path":            b.path,
-				"identifier":      b.identifier,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
 			}).Debug("bucket detected to be a fixed bucket")
@@ -309,8 +238,6 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 		} else if b.fixedWindow && !resetAtEq {
 			logger.WithFields(logrus.Fields{
 				"bucket":          b.bucket,
-				"path":            b.path,
-				"identifier":      b.identifier,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
 			}).Debug("bucket detected to be a sliding bucket")
@@ -321,7 +248,16 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 	}
 
 	b.resetAt = resetAt
-	b.resetAfter = resetAfter
+
+	if ratelimitHit {
+		// During ratelimit avoidance, we will treat the bucket as fixed
+		// bucket and wait for it to fill up completely
+		b.ratelimitAvoidance = true
+		_, increaseAt := calculateFixedWindow(resetAt, resetAfter)
+		b.increaseAt = increaseAt
+		b.remaining = 0
+		return
+	}
 
 	if !b.outOfSync {
 		return

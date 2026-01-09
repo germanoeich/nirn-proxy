@@ -3,15 +3,16 @@ package lib
 import (
 	"context"
 	"errors"
-	lru "github.com/hashicorp/golang-lru"
-	"github.com/hashicorp/memberlist"
-	"github.com/sirupsen/logrus"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	lru "github.com/hashicorp/golang-lru"
+	"github.com/hashicorp/memberlist"
+	"github.com/sirupsen/logrus"
 )
 
 type QueueType int64
@@ -30,18 +31,18 @@ var pathsToRouteLocally = map[uint64]struct{}{
 }
 
 type QueueManager struct {
-	sync.RWMutex
 	queues                   map[string]*RequestQueue
 	bearerQueues             *lru.Cache
-	bearerMu                 sync.RWMutex
-	bufferSize               int
 	cluster                  *memberlist.Memberlist
 	clusterGlobalRateLimiter *ClusterGlobalRateLimiter
-	orderedClusterMembers    []string
 	nameToAddressMap         map[string]string
 	localNodeName            string
 	localNodeIP              string
 	localNodeProxyListenAddr string
+	orderedClusterMembers    []string
+	bufferSize               int
+	sync.RWMutex
+	bearerMu sync.RWMutex
 }
 
 func onEvictLruItem(key interface{}, value interface{}) {

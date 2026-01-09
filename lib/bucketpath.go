@@ -139,63 +139,63 @@ func GetOptimisticBucketPath(url string, method string) string {
 
 				if diff >= 14*24*time.Hour {
 					bucket.WriteString("/!14dmsg")
-				} else if diff < 10*time.Second {
-					bucket.WriteString("/!10smsg")
 				} else {
 					bucket.WriteString("/!")
 				}
 				continue
 			}
+
 			bucket.WriteString("/!")
-		} else {
-			if currMajor == MajorChannels && part == "reactions" {
-				// reaction put/delete fall under a different bucket from other reaction endpoints
-				if method == "PUT" || method == "DELETE" {
-					bucket.WriteString("/reactions/!modify")
-					break
-				}
-				//All other reaction endpoints falls under the same bucket, so it's irrelevant if the user
-				//is passing userid, emoji, etc.
-				bucket.WriteString("/reactions/!/!")
-				//Reactions can only be followed by emoji/userid combo, since we don't care, break
+			continue
+		}
+
+		if currMajor == MajorChannels && part == "reactions" {
+			// reaction put/delete fall under a different bucket from other reaction endpoints
+			if method == "PUT" || method == "DELETE" {
+				bucket.WriteString("/reactions/!modify")
 				break
 			}
+			//All other reaction endpoints falls under the same bucket, so it's irrelevant if the user
+			//is passing userid, emoji, etc.
+			bucket.WriteString("/reactions/!/!")
+			//Reactions can only be followed by emoji/userid combo, since we don't care, break
+			break
+		}
 
-			// Strip webhook tokens, or extract interaction ID
-			if len(part) >= 64 {
-				// aW50ZXJhY3Rpb246 is base64 for "interaction:"
-				if !strings.HasPrefix(part, "aW50ZXJhY3Rpb246") {
-					bucket.WriteString("/!")
-					continue
-				}
-
-				var interactionId string
-
-				// fix padding
-				if i := len(part) % 4; i != 0 {
-					part += strings.Repeat("=", 4-i)
-				}
-
-				decodedPart, err := base64.StdEncoding.DecodeString(part)
-				if err != nil {
-					interactionId = "Unknown"
-				} else {
-					interactionId = strings.Split(string(decodedPart), ":")[1]
-				}
-
-				bucket.WriteByte('/')
-				bucket.WriteString(interactionId)
-				continue
-			}
-
-			// Strip webhook tokens and interaction tokens
-			if (currMajor == MajorWebhooks || currMajor == MajorInteractions) && len(part) >= 64 {
+		// Strip webhook tokens, or extract interaction ID
+		if len(part) >= 64 {
+			// aW50ZXJhY3Rpb246 is base64 for "interaction:"
+			if !strings.HasPrefix(part, "aW50ZXJhY3Rpb246") {
 				bucket.WriteString("/!")
 				continue
 			}
+
+			var interactionId string
+
+			// fix padding
+			if i := len(part) % 4; i != 0 {
+				part += strings.Repeat("=", 4-i)
+			}
+
+			decodedPart, err := base64.StdEncoding.DecodeString(part)
+			if err != nil {
+				interactionId = "Unknown"
+			} else {
+				interactionId = strings.Split(string(decodedPart), ":")[1]
+			}
+
 			bucket.WriteByte('/')
-			bucket.WriteString(part)
+			bucket.WriteString(interactionId)
+			continue
 		}
+
+		// Strip webhook tokens and interaction tokens
+		if (currMajor == MajorWebhooks || currMajor == MajorInteractions) && len(part) >= 64 {
+			bucket.WriteString("/!")
+			continue
+		}
+		bucket.WriteByte('/')
+		bucket.WriteString(part)
 	}
 
 	return bucket.String()

@@ -45,8 +45,6 @@ func TestPaths(t *testing.T) {
 		{"/api/v9/applications/203039963636301824/commands", "GET", "/applications/203039963636301824/commands"},
 		{"/api/v9/applications/203039963636301824/commands/203039963636301824", "GET", "/applications/203039963636301824/commands/!"},
 		// Message delete has multiple buckets
-		// exactly at 2016-01-01 00:00:00
-		{"/api/v9/channels/1412822759695974551/messages/132271570957574145", "DELETE", "/channels/1412822759695974551/messages/!10smsg"},
 		// 10 seconds after 2016-01-01 00:00:00
 		{"/api/v9/channels/1412822759695974551/messages/132271529014534145", "DELETE", "/channels/1412822759695974551/messages/!"},
 		// 14 days before 2016-01-01 00:00:00
