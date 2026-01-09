@@ -233,7 +233,7 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 		"resetAt":    resetAt,
 		"resetAfter": resetAfter,
 		"period":     b.period,
-	}).Info("updating bucket ratelimit")
+	}).Debug("updating bucket ratelimit")
 
 	if b.unknown {
 		b.init(bucket, remaining, limit, resetAt, resetAfter)
