@@ -329,13 +329,13 @@ func (item *QueueItem) doRequest(ctx context.Context, q *RequestQueue, ch *Queue
 
 	// TODO: Consider handling special retry case for POST /users/@me/channels
 
-	ratelimitHit := resp.StatusCode == 429 && scope != "shared"
+	ratelimitHit := resp.StatusCode == 429
 
-	if bucket != "" {
+	if bucket != "" || ratelimitHit {
 		ch.ratelimit.Update(bucket, remaining, limit, resetAt, resetAfter, ratelimitHit)
 	}
 
-	if ratelimitHit {
+	if ratelimitHit && scope != "shared" {
 		logger.WithFields(logrus.Fields{
 			"remaining":  remaining,
 			"resetAfter": resetAfter,
