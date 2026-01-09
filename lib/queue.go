@@ -169,7 +169,7 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 		"method": req.Method,
 	}).Trace("Inbound request")
 
-	ch := q.getQueueChannel(path, pathHash)
+	ch := q.getQueueChannel(path, req.Method, pathHash)
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
@@ -184,7 +184,7 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 	}
 }
 
-func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChannel {
+func (q *RequestQueue) getQueueChannel(path, method string, pathHash uint64) *QueueChannel {
 	t := time.Now()
 	q.Lock()
 	defer q.Unlock()
@@ -193,7 +193,7 @@ func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChann
 		ch = &QueueChannel{
 			ch:        make(chan *QueueItem, q.bufferSize),
 			lastUsed:  t,
-			ratelimit: NewBucketRatelimit(path, q.identifier),
+			ratelimit: NewBucketRatelimit(path, method, q.identifier),
 		}
 		q.queues[pathHash] = ch
 		// It's important that we only have 1 goroutine per channel

@@ -36,6 +36,7 @@ func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64)
 // BucketRateLimit is a sliding window ratelimit implementation
 type BucketRateLimit struct {
 	identifier string
+	method     string
 	path       string
 	bucket     string
 	lock       sync.Mutex
@@ -57,9 +58,10 @@ type BucketRateLimit struct {
 	ratelimitAvoidance bool
 }
 
-func NewBucketRatelimit(path, identifier string) BucketRateLimit {
+func NewBucketRatelimit(path, method, identifier string) BucketRateLimit {
 	return BucketRateLimit{
 		path:       path,
+		method:     method,
 		identifier: identifier,
 		limit:      1,
 		unknown:    true,
@@ -222,15 +224,16 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 	defer b.lock.Unlock()
 
 	logger.WithFields(logrus.Fields{
-		"bucket":     b.bucket,
+		"bucket":     bucket,
 		"path":       b.path,
+		"method":     b.method,
 		"identifier": b.identifier,
 		"remaining":  remaining,
 		"limit":      limit,
 		"resetAt":    resetAt,
 		"resetAfter": resetAfter,
 		"period":     b.period,
-	}).Debug("updating bucket ratelimit")
+	}).Info("updating bucket ratelimit")
 
 	if b.unknown {
 		b.init(bucket, remaining, limit, resetAt, resetAfter)
@@ -239,6 +242,16 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 
 	if resetAt-resetAfter < b.resetAt-b.resetAfter {
 		// Old ratelimit information, ignore
+		return
+	}
+
+	if ratelimitHit {
+		// During ratelimit avoidance, we will treat the bucket as fixed
+		// bucket and wait for it to fill up completely
+		b.ratelimitAvoidance = true
+		_, increaseAt := calculateFixedWindow(resetAt, resetAfter)
+		b.increaseAt = increaseAt
+		b.remaining = 0
 		return
 	}
 
@@ -275,16 +288,6 @@ func (b *BucketRateLimit) Update(bucket string, remaining, limit int64, resetAt,
 		}).Debug("bucket hash changed")
 
 		b.bucket = bucket
-	}
-
-	if ratelimitHit {
-		// During ratelimit avoidance, we will treat the bucket as fixed
-		// bucket and wait for it to fill up completely
-		b.ratelimitAvoidance = true
-		_, increaseAt := calculateFixedWindow(resetAt, resetAfter)
-		b.increaseAt = increaseAt
-		b.remaining = 0
-		return
 	}
 
 	if !b.outOfSync && b.firstSync && remaining > 0 && remaining != limit-1 {
