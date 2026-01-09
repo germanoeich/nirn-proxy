@@ -36,15 +36,15 @@ func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64)
 // Bucket is a Discord bucket ratelimiter
 type Bucket struct {
 	increaseAt      time.Time
-	serverUpdateAt  time.Time
 	transitWaitChan chan interface{}
 
-	bucket    string
-	remaining int64
-	limit     int64
-	period    time.Duration
-	resetAt   float64
-	inTransit int64
+	bucket     string
+	remaining  int64
+	limit      int64
+	period     time.Duration
+	resetAt    float64
+	resetAfter float64
+	inTransit  int64
 
 	stateLock     sync.Mutex
 	inTransitLock sync.Mutex
@@ -75,9 +75,10 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 
 	return &Bucket{
 		bucket:      bucket,
-		remaining:   remaining,
+		remaining:   remaining + 100,
 		limit:       limit,
 		resetAt:     resetAt,
+		resetAfter:  resetAfter,
 		period:      period,
 		increaseAt:  increaseAt,
 		fixedWindow: fixedWindow,
@@ -202,19 +203,25 @@ func (b *Bucket) Release() {
 }
 
 func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, ratelimitHit bool) {
-	resetAtTime := time.Unix(0, int64(resetAt*1_000_000_000))
-	resetAfterDuration := time.Duration(resetAfter*1_000) * time.Millisecond
-	serverUpdateAt := resetAtTime.Add(-resetAfterDuration)
-
 	b.stateLock.Lock()
 	defer b.stateLock.Unlock()
 
-	if serverUpdateAt.Before(b.serverUpdateAt) {
+	if resetAt-resetAfter < b.resetAt-b.resetAfter {
 		// Old ratelimit information, ignore
 		return
 	}
 
-	b.serverUpdateAt = serverUpdateAt
+	if ratelimitHit {
+		// During ratelimit avoidance, we will treat the bucket as fixed
+		// bucket and wait for it to fill up completely
+		b.ratelimitAvoidance = true
+		_, increaseAt := calculateFixedWindow(resetAt, resetAfter)
+		b.increaseAt = increaseAt
+		b.remaining = 0
+		b.resetAt = resetAt
+		b.resetAfter = resetAfter
+		return
+	}
 
 	if b.firstSeen && !b.outOfSync && remaining > 0 && remaining != limit-1 {
 		resetAtEq := isClose(b.resetAt, resetAt, 0.05)
@@ -243,16 +250,7 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	}
 
 	b.resetAt = resetAt
-
-	if ratelimitHit {
-		// During ratelimit avoidance, we will treat the bucket as fixed
-		// bucket and wait for it to fill up completely
-		b.ratelimitAvoidance = true
-		_, increaseAt := calculateFixedWindow(resetAt, resetAfter)
-		b.increaseAt = increaseAt
-		b.remaining = 0
-		return
-	}
+	b.resetAfter = resetAfter
 
 	if !b.outOfSync {
 		return
