@@ -87,12 +87,7 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 
 // Warning: this MUST be called from a locked state
 func (b *Bucket) isRatelimited(now time.Time) bool {
-	// If we are out of sync, we shouldn't slide the window along, as we will be off due to
-	// network latency.
-	//
-	// The second part of this 'if' is for self-healing purposes, to account for the weird case where
-	// an error occurs and the bucket is not updated properly, becoming permanently out of sync
-	if now.After(b.increaseAt) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
+	if now.After(b.increaseAt) {
 		if b.fixedWindow || b.ratelimitAvoidance {
 			// Fixed windows or ratelimit avoidance just reset the remaining back to the limit
 			b.remaining = b.limit
