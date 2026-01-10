@@ -75,7 +75,7 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 
 	return &Bucket{
 		bucket:      bucket,
-		remaining:   remaining + 100,
+		remaining:   remaining,
 		limit:       limit,
 		resetAt:     resetAt,
 		resetAfter:  resetAfter,
