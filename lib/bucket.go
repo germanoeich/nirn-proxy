@@ -34,13 +34,12 @@ type Bucket struct {
 	increaseAt      time.Time
 	transitWaitChan chan interface{}
 
-	bucket     string
-	remaining  int64
-	limit      int64
-	period     time.Duration
-	resetAt    float64
-	resetAfter float64
-	inTransit  int64
+	bucket    string
+	remaining int64
+	limit     int64
+	period    time.Duration
+	resetAt   float64
+	inTransit int64
 
 	stateLock     sync.Mutex
 	inTransitLock sync.Mutex
@@ -74,7 +73,6 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 		remaining:   remaining,
 		limit:       limit,
 		resetAt:     resetAt,
-		resetAfter:  resetAfter,
 		period:      period,
 		increaseAt:  increaseAt,
 		fixedWindow: fixedWindow,
@@ -203,7 +201,6 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 		_, b.increaseAt = calculateFixedWindow(resetAt, resetAfter)
 		b.remaining = 0
 		b.resetAt = resetAt
-		b.resetAfter = resetAfter
 		return
 	}
 
@@ -234,7 +231,6 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	}
 
 	b.resetAt = resetAt
-	b.resetAfter = resetAfter
 
 	if b.outOfSync || (limit != 1 && remaining == limit-1) {
 		if b.fixedWindow {
