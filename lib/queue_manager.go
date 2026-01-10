@@ -337,7 +337,8 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 				log.WithFields(logrus.Fields{
 					"waitedFor": time.Since(reqStart),
-					"path":      req.URL.Path,
+					"method":    req.Method,
+					"route":     req.URL.Path,
 				}).Warn(err)
 			} else {
 				log.Error(err)

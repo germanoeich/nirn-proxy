@@ -463,6 +463,7 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 				"resetAt":    resetAt,
 				"resetAfter": resetAfter,
 				"identifier": q.identifier,
+				"path":       path,
 				"route":      item.Req.URL.String(),
 				"method":     item.Req.Method,
 			}).Debug("creating new bucket")
@@ -476,6 +477,7 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 				"resetAt":    resetAt,
 				"resetAfter": resetAfter,
 				"identifier": q.identifier,
+				"path":       path,
 				"route":      item.Req.URL.String(),
 				"method":     item.Req.Method,
 			}).Debug("updating existing bucket")
@@ -491,6 +493,7 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 				"identifier": q.identifier,
 				"route":      item.Req.URL.String(),
 				"method":     item.Req.Method,
+				"path":       path,
 			}).Debug("linking new bucket to route")
 
 			ch.buckets = append(ch.buckets, bucketHash)
