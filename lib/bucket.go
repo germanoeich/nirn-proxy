@@ -84,12 +84,12 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 
 // Warning: this MUST be called from a locked state
 func (b *Bucket) isRatelimited(now time.Time) bool {
-	if now.After(b.increaseAt) || now.Equal(b.increaseAt) {
+	if (now.After(b.increaseAt) || now.Equal(b.increaseAt)) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
 		if b.fixedWindow || b.ratelimitAvoidance {
 			// Fixed windows or ratelimit avoidance just reset the remaining back to the limit
 			b.remaining = b.limit
-			b.outOfSync = true
 			b.increaseAt = now.Add(b.period)
+			b.outOfSync = true
 			b.ratelimitAvoidance = false
 
 		} else {
@@ -153,29 +153,23 @@ func (b *Bucket) Acquire(ctx context.Context) error {
 		sleepDuration := b.increaseAt.Sub(now)
 		b.stateLock.Unlock()
 
-		select {
-		case <-ctx.Done():
-			b.Release()
-			return ctx.Err()
-		default:
-		}
-
 		if sleepDuration > 0 {
 			logger.WithFields(logrus.Fields{
 				"bucket":        b.bucket,
 				"sleepDuration": sleepDuration,
 			}).Debug("backing off to avoid hitting ratelimits")
+		} else {
+			sleepDuration = time.Duration(0)
+		}
 
-			select {
-			case <-ctx.Done():
-				b.Release()
-				return ctx.Err()
-			case <-time.After(sleepDuration):
-			}
+		select {
+		case <-ctx.Done():
+			b.Release()
+			return ctx.Err()
+		case <-time.After(sleepDuration):
 		}
 	}
 
-	// FIXME: Consider not decrementing remaining until release and make sure the request was made
 	b.remaining--
 	b.stateLock.Unlock()
 	return nil
@@ -202,17 +196,11 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	b.stateLock.Lock()
 	defer b.stateLock.Unlock()
 
-	if resetAt-resetAfter < b.resetAt-b.resetAfter {
-		// Old ratelimit information, ignore
-		return
-	}
-
 	if ratelimitHit {
 		// During ratelimit avoidance, we will treat the bucket as fixed
 		// bucket and wait for it to fill up completely
 		b.ratelimitAvoidance = true
-		_, increaseAt := calculateFixedWindow(resetAt, resetAfter)
-		b.increaseAt = increaseAt
+		_, b.increaseAt = calculateFixedWindow(resetAt, resetAfter)
 		b.remaining = 0
 		b.resetAt = resetAt
 		b.resetAfter = resetAfter
@@ -248,19 +236,17 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	b.resetAt = resetAt
 	b.resetAfter = resetAfter
 
-	if !b.outOfSync {
-		return
-	}
+	if b.outOfSync || (limit != 1 && remaining == limit-1) {
+		if b.fixedWindow {
+			period, increaseAt := calculateFixedWindow(resetAt, resetAfter)
+			b.period = period
+			b.increaseAt = increaseAt
+		} else {
+			period, increaseAt := calculateSlidingWindow(remaining, limit, resetAfter)
+			b.period = period
+			b.increaseAt = increaseAt
+		}
 
-	if b.fixedWindow {
-		period, increaseAt := calculateFixedWindow(resetAt, resetAfter)
-		b.period = period
-		b.increaseAt = increaseAt
-	} else {
-		period, increaseAt := calculateSlidingWindow(remaining, limit, resetAfter)
-		b.period = period
-		b.increaseAt = increaseAt
+		b.outOfSync = false
 	}
-
-	b.outOfSync = false
 }
