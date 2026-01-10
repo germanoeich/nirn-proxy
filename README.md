@@ -42,7 +42,7 @@ Configuration options are
 | DISABLE_HTTP_2                     | bool                                          | true    |
 | BOT_RATELIMIT_OVERRIDES            | string list (comma separated)                 | ""      |
 | DISABLE_GLOBAL_RATELIMIT_DETECTION | boolean                                       | false   |
-| ALLOW_CONCURRENT_REQUESTS          | boolean                                       | false   |
+| ALLOW_CONCURRENT_REQUESTS          | boolean                                       | true    |
 
 Information on each config var can be found [here](CONFIG.md)
 

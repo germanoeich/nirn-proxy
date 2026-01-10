@@ -80,7 +80,7 @@ Allows nirn to perform concurrent requests to Discord endpoints, instead of one 
 
 If you do not care about throughput or do not make a lot of requests to the same endpoint that might take Discord a while to answer, then it would be fine to keep this off.
 
-Default: false
+Default: true
 
 ## Unstable env vars
 Collection of env vars that may be removed at any time, mainly used for Discord introducing new behaviour on their edge api versions

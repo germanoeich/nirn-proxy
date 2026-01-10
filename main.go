@@ -3,10 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"github.com/germanoeich/nirn-proxy/lib"
-	"github.com/hashicorp/memberlist"
-	_ "github.com/joho/godotenv/autoload"
-	"github.com/sirupsen/logrus"
 	"net"
 	"net/http"
 	"os"
@@ -14,6 +10,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/hashicorp/memberlist"
+	_ "github.com/joho/godotenv/autoload"
+	"github.com/sirupsen/logrus"
+
+	"github.com/germanoeich/nirn-proxy/lib"
 )
 
 var logger = logrus.New()
@@ -76,7 +78,7 @@ func main() {
 	globalOverrides := lib.EnvGet("BOT_RATELIMIT_OVERRIDES", "")
 
 	disableGlobalRatelimitDetection := lib.EnvGetBool("DISABLE_GLOBAL_RATELIMIT_DETECTION", false)
-	allowConcurrentRequests := lib.EnvGetBool("ALLOW_CONCURRENT_REQUESTS", false)
+	allowConcurrentRequests := lib.EnvGetBool("ALLOW_CONCURRENT_REQUESTS", true)
 
 	lib.ConfigureDiscordHTTPClient(outboundIp, time.Duration(timeout)*time.Millisecond, globalOverrides, disableHttp2, disableGlobalRatelimitDetection, allowConcurrentRequests)
 
