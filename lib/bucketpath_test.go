@@ -14,7 +14,7 @@ func TestPaths(t *testing.T) {
 		// Guild Major
 		{"/api/v9/guilds/103039963636301824", "GET", "/guilds/103039963636301824"},
 		// Channel major
-		{"/api/v8/channels/203039963636301824", "GET", "/channels/!"},
+		{"/api/v8/channels/203039963636301824", "GET", "/channels/203039963636301824"},
 		{"/api/v7/channels/203039963636301824/pins", "GET", "/channels/203039963636301824/pins"},
 		{"/api/v6/channels/872712139712913438/messages/872712150509047809/reactions/%F0%9F%98%8B", "GET", "/channels/872712139712913438/messages/!/reactions/!/!"},
 		{"/api/v10/channels/872712139712913438/messages/872712150509047809/reactions/PandaOhShit:863985751205085195", "GET", "/channels/872712139712913438/messages/!/reactions/!/!"},

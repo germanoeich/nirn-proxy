@@ -90,30 +90,14 @@ func GetOptimisticBucketPath(url string, method string) string {
 	currMajor := MajorUnknown
 	// ! stands for any replaceable id
 	switch parts[0] {
-	case MajorChannels:
-		if numParts == 2 {
-			// Return the same bucket for all reqs to /channels/id
-			// In this case, the discord bucket is the same regardless of the id
-			bucket.WriteString(MajorChannels)
-			bucket.WriteString("/!")
-			return bucket.String()
-		}
-		bucket.WriteString(MajorChannels)
-		bucket.WriteByte('/')
-		bucket.WriteString(parts[1])
-		currMajor = MajorChannels
 	case MajorInvites:
 		bucket.WriteString(MajorInvites)
 		bucket.WriteString("/!")
 		currMajor = MajorInvites
-	case MajorGuilds:
-		fallthrough
 	case MajorInteractions:
 		if numParts == 4 && parts[3] == "callback" {
 			return "/" + MajorInteractions + "/" + parts[1] + "/!/callback"
 		}
-		fallthrough
-	case MajorWebhooks:
 		fallthrough
 	default:
 		bucket.WriteString(parts[0])
