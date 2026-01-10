@@ -21,14 +21,10 @@ func calculateFixedWindow(resetAt, resetAfter float64) (time.Duration, time.Time
 	return period, increaseAt
 }
 
-func calculateSlidingWindow(remaining, limit int64, resetAt, resetAfter float64) (time.Duration, time.Time) {
+func calculateSlidingWindow(remaining, limit int64, resetAfter float64) (time.Duration, time.Time) {
 	// slidePeriod = resetAfter / (limit - remaining)
 	slidePeriod := time.Duration(math.Ceil((resetAfter/float64(limit-remaining))*1_000)) * time.Millisecond
-
-	// increaseAt = (resetAt - resetAfter) + slidePeriod
-	resetAtTime := time.Unix(0, int64(resetAt*1_000_000_000))
-	resetAfterDuration := time.Duration(resetAfter*1_000) * time.Millisecond
-	increaseAt := resetAtTime.Add(-resetAfterDuration).Add(slidePeriod)
+	increaseAt := time.Now().Add(slidePeriod)
 
 	return slidePeriod, increaseAt
 }
@@ -64,7 +60,7 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 	if limit != 1 && remaining == limit-1 {
 		// We have the perfect condition for a sliding window, so assume that for now.
 		// Turning it into a fixed bucket later is preferable, as we might never get this chance again
-		period, increaseAt = calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
+		period, increaseAt = calculateSlidingWindow(remaining, limit, resetAfter)
 		fixedWindow = false
 	} else {
 		// We can assume its a fixed bucket for now, and hope that in the future we will get
@@ -88,7 +84,7 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 
 // Warning: this MUST be called from a locked state
 func (b *Bucket) isRatelimited(now time.Time) bool {
-	if now.After(b.increaseAt) {
+	if now.After(b.increaseAt) || now.Equal(b.increaseAt) {
 		if b.fixedWindow || b.ratelimitAvoidance {
 			// Fixed windows or ratelimit avoidance just reset the remaining back to the limit
 			b.remaining = b.limit
@@ -261,7 +257,7 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 		b.period = period
 		b.increaseAt = increaseAt
 	} else {
-		period, increaseAt := calculateSlidingWindow(remaining, limit, resetAt, resetAfter)
+		period, increaseAt := calculateSlidingWindow(remaining, limit, resetAfter)
 		b.period = period
 		b.increaseAt = increaseAt
 	}
