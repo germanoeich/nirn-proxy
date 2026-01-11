@@ -46,11 +46,11 @@ func GetMetricsPath(route string) string {
 		return "/invite/!"
 	}
 
-	for _, part := range parts {
+	for idx, part := range parts {
 		if part == "" {
 			continue
 		}
-		if IsNumericInput(part) {
+		if IsNumericInput(part) || (idx != 0 && parts[idx-1] == "activity-instances") {
 			path += "/!"
 		} else {
 			path += "/" + part
