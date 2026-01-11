@@ -34,21 +34,23 @@ type Bucket struct {
 	increaseAt      time.Time
 	transitWaitChan chan interface{}
 
-	bucket    string
-	remaining int64
-	limit     int64
-	period    time.Duration
-	resetAt   float64
+	// under stateLock
+	bucket          string
+	remaining       int64
+	limit           int64
+	period          time.Duration
+	resetAt         time.Time
+	serverUpdatedAt time.Time
+	// under inTransitLock
 	inTransit int64
 
 	stateLock     sync.Mutex
 	inTransitLock sync.Mutex
 	acquireLock   sync.Mutex
 
-	outOfSync          bool
-	fixedWindow        bool
-	firstSeen          bool
-	ratelimitAvoidance bool
+	outOfSync   bool
+	fixedWindow bool
+	firstSeen   bool
 }
 
 func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float64) *Bucket {
@@ -72,7 +74,7 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 		bucket:      bucket,
 		remaining:   remaining,
 		limit:       limit,
-		resetAt:     resetAt,
+		resetAt:     time.Unix(0, int64(resetAt*1_000_000_000)),
 		period:      period,
 		increaseAt:  increaseAt,
 		fixedWindow: fixedWindow,
@@ -82,16 +84,24 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 
 // Warning: this MUST be called from a locked state
 func (b *Bucket) isRatelimited(now time.Time) bool {
-	if (now.After(b.increaseAt) || now.Equal(b.increaseAt)) && (!b.outOfSync || now.Sub(b.increaseAt) > b.period) {
-		if b.fixedWindow || b.ratelimitAvoidance {
-			// Fixed windows or ratelimit avoidance just reset the remaining back to the limit
+	canIncrease := now.After(b.increaseAt)
+	canReset := now.After(b.resetAt)
+
+	if (canIncrease && !b.outOfSync) || canReset {
+		if b.fixedWindow {
+			// Fixed windows just reset the remaining back to the limit
 			b.remaining = b.limit
 			b.increaseAt = now.Add(b.period)
+			b.resetAt = b.increaseAt
 			b.outOfSync = true
-			b.ratelimitAvoidance = false
-
+		} else if canReset {
+			// Sliding bucket being fully reset
+			b.remaining = b.limit
+			b.increaseAt = now.Add(b.period)
+			b.resetAt = now.Add(b.period * time.Duration(b.limit))
+			b.outOfSync = true
 		} else {
-			// We can slide the window along
+			// Slide window along
 			gain := int64(math.Floor((now.Sub(b.increaseAt).Seconds())/b.period.Seconds())) + 1
 			nowRemaining := b.remaining + gain
 
@@ -101,9 +111,11 @@ func (b *Bucket) isRatelimited(now time.Time) bool {
 				// When a ratelimit resets, we will fall out of sync from the remote, so
 				// we want to prevent future sliding
 				b.increaseAt = now.Add(b.period)
+				b.resetAt = now.Add(b.period * time.Duration(b.limit))
 				b.outOfSync = true
 			} else {
 				b.increaseAt = b.increaseAt.Add(b.period * time.Duration(gain))
+				b.resetAt = b.resetAt.Add(b.period * time.Duration(gain))
 			}
 		}
 	}
@@ -115,6 +127,7 @@ func (b *Bucket) isRatelimited(now time.Time) bool {
 func (b *Bucket) Acquire(ctx context.Context) error {
 	b.acquireLock.Lock()
 	defer b.acquireLock.Unlock()
+
 	b.inTransitLock.Lock()
 	if b.inTransit >= b.limit {
 		// Buffer of 1 here to prevent deadlocks in a worst case scenario
@@ -194,18 +207,26 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	b.stateLock.Lock()
 	defer b.stateLock.Unlock()
 
+	resetAtTime := time.Unix(0, int64(resetAt*1_000_000_000))
+	resetAfterDuration := time.Duration(resetAfter*1_000) * time.Millisecond
+	serverUpdatedAt := resetAtTime.Add(-resetAfterDuration)
+
+	if b.serverUpdatedAt.Before(serverUpdatedAt) {
+		b.serverUpdatedAt = serverUpdatedAt
+	}
+
 	if ratelimitHit {
 		// During ratelimit avoidance, we will treat the bucket as fixed
 		// bucket and wait for it to fill up completely
-		b.ratelimitAvoidance = true
 		_, b.increaseAt = calculateFixedWindow(resetAt, resetAfter)
+		b.resetAt = resetAtTime
 		b.remaining = 0
-		b.resetAt = resetAt
+		b.outOfSync = false
 		return
 	}
 
 	if b.firstSeen && !b.outOfSync && remaining > 0 && remaining != limit-1 {
-		resetAtEq := isClose(b.resetAt, resetAt, 0.05)
+		resetAtEq := isClose(float64(b.resetAt.UnixMilli()/1_000_000), resetAt, 0.05)
 		b.firstSeen = false
 
 		if !b.fixedWindow && resetAtEq {
@@ -230,7 +251,9 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 		}
 	}
 
-	b.resetAt = resetAt
+	if b.resetAt.Before(resetAtTime) {
+		b.resetAt = resetAtTime
+	}
 
 	if b.outOfSync || (limit != 1 && remaining == limit-1) {
 		if b.fixedWindow {

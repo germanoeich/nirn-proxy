@@ -47,8 +47,17 @@ func TestPaths(t *testing.T) {
 		// Message delete has multiple buckets
 		// 10 seconds after 2016-01-01 00:00:00
 		{"/api/v9/channels/1412822759695974551/messages/132271529014534145", "DELETE", "/channels/1412822759695974551/messages/!"},
+		// 1 hour before 2016-01-01 00:00:00
+		{"/api/v9/channels/1412822759695974551/messages/132256471463174144", "DELETE", "/channels/1412822759695974551/messages/!"},
 		// 14 days before 2016-01-01 00:00:00
 		{"/api/v9/channels/1412822759695974551/messages/127198140839174145", "DELETE", "/channels/1412822759695974551/messages/!14dmsg"},
+		// Message patch has multiple buckets
+		// 10 seconds after 2016-01-01 00:00:00
+		{"/api/v9/channels/1412822759695974551/messages/132271529014534145", "PATCH", "/channels/1412822759695974551/messages/!"},
+		// 1 hour before 2016-01-01 00:00:00
+		{"/api/v9/channels/1412822759695974551/messages/132256471463174144", "PATCH", "/channels/1412822759695974551/messages/!1hmsg"},
+		// 14 days before 2016-01-01 00:00:00
+		{"/api/v9/channels/1412822759695974551/messages/127198140839174145", "PATCH", "/channels/1412822759695974551/messages/!1hmsg"},
 	}
 	for _, tt := range tests {
 		testname := fmt.Sprintf("%s-%s", tt.method, tt.path)
@@ -59,7 +68,7 @@ func TestPaths(t *testing.T) {
 				time.Sleep(140256 * time.Hour)
 
 				// Time will always be midnight UTC 2016-01-01 00:00:00
-				bucket := GetOptimisticBucketPath(tt.path, tt.method)
+				bucket, _ := GetOptimisticBucketPath(tt.path, tt.method)
 				if bucket != tt.want {
 					t.Errorf("Expected %s but got %s", tt.want, bucket)
 				}

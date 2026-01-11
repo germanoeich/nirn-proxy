@@ -204,7 +204,7 @@ func (q *RequestQueue) sweepBuckets() {
 	for key, val := range q.buckets {
 		// This is technically a data race, but we are looking for buckets that are insanely
 		// unused, so we can afford the data race
-		if val.inTransit == 0 && time.Since(val.increaseAt) > 3*val.period {
+		if time.Since(val.serverUpdatedAt) > 30*time.Second {
 			delete(q.buckets, key)
 			sweptEntries++
 		}
@@ -237,14 +237,14 @@ func safeSend(queue *QueueChannel, value *QueueItem) {
 	queue.ch <- value
 }
 
-func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash uint64) error {
+func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash, bucketHash uint64) error {
 	logger.WithFields(logrus.Fields{
 		"bucket": path,
 		"path":   req.URL.Path,
 		"method": req.Method,
 	}).Trace("Inbound request")
 
-	ch := q.getQueueChannel(path, pathHash)
+	ch := q.getQueueChannel(path, pathHash, bucketHash)
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
@@ -259,7 +259,7 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 	}
 }
 
-func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChannel {
+func (q *RequestQueue) getQueueChannel(path string, pathHash, bucketHash uint64) *QueueChannel {
 	t := time.Now()
 	q.Lock()
 	defer q.Unlock()
@@ -272,7 +272,7 @@ func (q *RequestQueue) getQueueChannel(path string, pathHash uint64) *QueueChann
 		}
 		q.queues[pathHash] = ch
 		// It's important that we only have 1 goroutine per channel
-		go q.subscribe(ch, path, pathHash)
+		go q.subscribe(ch, path, bucketHash)
 	} else {
 		ch.lastUsed = t
 	}
@@ -293,7 +293,7 @@ func parseHeaders(headers *http.Header) (string, int64, int64, float64, float64,
 	scope := headers.Get("x-ratelimit-scope")
 
 	if scope == "" {
-		scope = "route"
+		scope = "user"
 	}
 
 	if resetAfter == "" || (scope != "user" && retryAfter != "") {
@@ -405,7 +405,7 @@ func (q *RequestQueue) getBucketsContextManager(ch *QueueChannel) *bucketsContex
 	return contextManager
 }
 
-func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *QueueChannel, buckets *bucketsContextManager, path, pathHash string) {
+func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *QueueChannel, buckets *bucketsContextManager, path, topBucketHash string) {
 	if buckets != nil {
 		defer func() {
 			buckets.Release()
@@ -447,11 +447,10 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 	if bucketHash != "" || ratelimitHit {
 		if bucketHash == "" {
 			// We might have hit a Cloudflare 429, so we create a special bucket for that
-			bucketHash = "route"
+			bucketHash = "route" + ":" + topBucketHash
+		} else {
+			bucketHash = bucketHash + ":" + topBucketHash + ":" + scope
 		}
-
-		// Bucket hashes are per path hash
-		bucketHash += ":" + pathHash
 
 		q.Lock()
 		bucket, ok := q.buckets[bucketHash]
@@ -510,7 +509,7 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 			"identifier": q.identifier,
 			"route":      item.Req.URL.String(),
 			"method":     item.Req.Method,
-			"pathHash":   pathHash,
+			"pathHash":   topBucketHash,
 			// TODO: Remove this when 429s are not a problem anymore
 			"discordBucket":  bucketHash,
 			"ratelimitScope": scope,
@@ -548,11 +547,11 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 	}
 }
 
-func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHashInt uint64) {
+func (q *RequestQueue) subscribe(ch *QueueChannel, path string, majorBucketHashInt uint64) {
 	// This function has 1 goroutine for each bucket path
 	// Locking here is not needed
 
-	pathHash := strconv.FormatUint(pathHashInt, 10)
+	majorBucketHash := strconv.FormatUint(majorBucketHashInt, 10)
 
 	for item := range ch.ch {
 		ctx := context.WithValue(item.Req.Context(), "identifier", q.identifier)
@@ -604,11 +603,11 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHashInt uint
 		// If this is a route with no ratelimits, then we will simply execute them all sequentially,
 		// which should be fine
 		//
-		// TODO: Consider if its worth hard coding which routes will never have a bucket
-		if buckets == nil || !allowConcurrentRequests {
-			q.doRequest(ctx, item, ch, buckets, path, pathHash)
+		// PathHashInt is a special case for "no ratelimits" endpoints
+		if (buckets == nil && majorBucketHashInt != 0) || !allowConcurrentRequests {
+			q.doRequest(ctx, item, ch, buckets, path, majorBucketHash)
 		} else {
-			go q.doRequest(ctx, item, ch, buckets, path, pathHash)
+			go q.doRequest(ctx, item, ch, buckets, path, majorBucketHash)
 		}
 	}
 }

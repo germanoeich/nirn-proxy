@@ -254,13 +254,13 @@ func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http
 	defer ConnectionsOpen.With(map[string]string{"route": metricsPath, "method": req.Method}).Dec()
 
 	token := req.Header.Get("Authorization")
-	routingHash, path, queueType := m.GetRequestRoutingInfo(req, token)
+	routingHash, majorBucketHash, path, queueType := m.GetRequestRoutingInfo(req, token)
 
-	m.fulfillRequest(&resp, req, queueType, path, routingHash, token, reqStart)
+	m.fulfillRequest(&resp, req, queueType, path, routingHash, majorBucketHash, token, reqStart)
 }
 
-func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (routingHash uint64, path string, queueType QueueType) {
-	path = GetOptimisticBucketPath(req.URL.Path, req.Method)
+func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (routingHash, majorBucketHash uint64, path string, queueType QueueType) {
+	path, majorBucketHash = GetOptimisticBucketPath(req.URL.Path, req.Method)
 	queueType = NoAuth
 	if strings.HasPrefix(token, "Bearer") {
 		queueType = Bearer
@@ -272,7 +272,7 @@ func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (r
 	return
 }
 
-func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Request, queueType QueueType, path string, pathHash uint64, token string, reqStart time.Time) {
+func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Request, queueType QueueType, path string, pathHash, majorBucketHash uint64, token string, reqStart time.Time) {
 	logEntry := logger.WithField("clientIp", req.RemoteAddr)
 	forwdFor := req.Header.Get("X-Forwarded-For")
 	if forwdFor != "" {
@@ -331,7 +331,7 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 				}
 			}
 		}
-		err = q.Queue(req, resp, path, pathHash)
+		err = q.Queue(req, resp, path, pathHash, majorBucketHash)
 		if err != nil {
 			log := logEntry.WithField("function", "Queue")
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {

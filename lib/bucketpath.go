@@ -8,7 +8,6 @@ import (
 )
 
 const (
-	MajorUnknown      = "unk"
 	MajorChannels     = "channels"
 	MajorGuilds       = "guilds"
 	MajorWebhooks     = "webhooks"
@@ -39,7 +38,7 @@ func IsNumericInput(str string) bool {
 }
 
 func GetMetricsPath(route string) string {
-	route = GetOptimisticBucketPath(route, "")
+	route, _ = GetOptimisticBucketPath(route, "")
 	var path = ""
 	parts := strings.Split(route, "/")
 
@@ -66,7 +65,37 @@ func GetMetricsPath(route string) string {
 	return path
 }
 
-func GetOptimisticBucketPath(url string, method string) string {
+func majorParamHash(major string, parts ...string) uint64 {
+	hashStr := major
+
+	for _, part := range parts {
+		hashStr += ":" + part
+	}
+
+	return HashCRC64(hashStr)
+}
+
+func tokenInfo(token string) string {
+	// aW50ZXJhY3Rpb246 is base64 for "interaction:"
+	if !strings.HasPrefix(token, "aW50ZXJhY3Rpb246") {
+		return "/!"
+	}
+
+	// fix padding
+	if i := len(token) % 4; i != 0 {
+		token += strings.Repeat("=", 4-i)
+	}
+
+	decodedPart, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		return "/unknown"
+	}
+
+	interactionId := strings.Split(string(decodedPart), ":")[1]
+	return "/" + interactionId
+}
+
+func GetOptimisticBucketPath(url string, method string) (string, uint64) {
 	bucket := strings.Builder{}
 	bucket.WriteByte('/')
 	cleanUrl := strings.SplitN(url, "?", 1)[0]
@@ -84,19 +113,41 @@ func GetOptimisticBucketPath(url string, method string) string {
 	numParts := len(parts)
 
 	if numParts <= 1 {
-		return cleanUrl
+		return cleanUrl, HashCRC64(cleanUrl)
 	}
 
-	currMajor := MajorUnknown
+	currMajor := parts[0]
+	var majorParamsHash uint64
 	// ! stands for any replaceable id
 	switch parts[0] {
 	case MajorInvites:
 		bucket.WriteString(MajorInvites)
 		bucket.WriteString("/!")
+
 		currMajor = MajorInvites
+		majorParamsHash = majorParamHash(MajorInvites)
+		parts = parts[2:]
+	case MajorWebhooks:
+		bucket.WriteString(MajorWebhooks)
+		bucket.WriteByte('/')
+		bucket.WriteString(parts[1])
+
+		currMajor = MajorWebhooks
+		// Webhook tokens are optional, and they fall under different top level resources
+		if numParts > 2 && len(parts[2]) >= 64 {
+			// webhook_id + token
+			bucket.WriteString(tokenInfo(parts[2]))
+			majorParamsHash = majorParamHash(MajorWebhooks, parts[1], parts[2])
+			parts = parts[3:]
+		} else {
+			// just webhook_id
+			majorParamsHash = majorParamHash(MajorWebhooks, parts[1])
+			parts = parts[2:]
+		}
 	case MajorInteractions:
 		if numParts == 4 && parts[3] == "callback" {
-			return "/" + MajorInteractions + "/" + parts[1] + "/!/callback"
+			// Hash 0 is a special case for "no ratelimits"
+			return "/" + MajorInteractions + "/" + parts[1] + "/!/callback", 0
 		}
 		fallthrough
 	default:
@@ -104,29 +155,30 @@ func GetOptimisticBucketPath(url string, method string) string {
 		bucket.WriteByte('/')
 		bucket.WriteString(parts[1])
 		currMajor = parts[0]
+		majorParamsHash = majorParamHash(currMajor, parts[1])
+		parts = parts[2:]
 	}
 
 	if numParts == 2 {
-		return bucket.String()
+		return bucket.String(), majorParamsHash
 	}
 
-	// At this point, the major + id part is already accounted for
+	// At this point, the major + id part is already accounted for (and trimmed out of 'parts')
 	// In this loop, we only need to strip all remaining snowflakes, emoji names and webhook tokens(optional)
-	parts = parts[2:]
-
 	for idx, part := range parts {
 		if IsSnowflake(part) {
-			//Custom rule for message DELETES older than 14d
-			if currMajor == MajorChannels && idx == len(parts)-1 && parts[idx-1] == "messages" && method == "DELETE" {
+			//Custom rule for message DELETES older than 14d and message PATCHES older than 1h
+			if currMajor == MajorChannels && idx == len(parts)-1 && parts[idx-1] == "messages" {
 				createdAt, _ := GetSnowflakeCreatedAt(part)
-				diff := time.Now().Sub(createdAt)
+				diff := time.Since(createdAt)
 
-				if diff >= 14*24*time.Hour {
+				if method == "DELETE" && diff >= 14*24*time.Hour {
 					bucket.WriteString("/!14dmsg")
-				} else {
-					bucket.WriteString("/!")
+					continue
+				} else if method == "PATCH" && diff >= 1*time.Hour {
+					bucket.WriteString("/!1hmsg")
+					continue
 				}
-				continue
 			}
 
 			bucket.WriteString("/!")
@@ -146,41 +198,9 @@ func GetOptimisticBucketPath(url string, method string) string {
 			break
 		}
 
-		// Strip webhook tokens, or extract interaction ID
-		if len(part) >= 64 {
-			// aW50ZXJhY3Rpb246 is base64 for "interaction:"
-			if !strings.HasPrefix(part, "aW50ZXJhY3Rpb246") {
-				bucket.WriteString("/!")
-				continue
-			}
-
-			var interactionId string
-
-			// fix padding
-			if i := len(part) % 4; i != 0 {
-				part += strings.Repeat("=", 4-i)
-			}
-
-			decodedPart, err := base64.StdEncoding.DecodeString(part)
-			if err != nil {
-				interactionId = "Unknown"
-			} else {
-				interactionId = strings.Split(string(decodedPart), ":")[1]
-			}
-
-			bucket.WriteByte('/')
-			bucket.WriteString(interactionId)
-			continue
-		}
-
-		// Strip webhook tokens and interaction tokens
-		if (currMajor == MajorWebhooks || currMajor == MajorInteractions) && len(part) >= 64 {
-			bucket.WriteString("/!")
-			continue
-		}
 		bucket.WriteByte('/')
 		bucket.WriteString(part)
 	}
 
-	return bucket.String()
+	return bucket.String(), majorParamsHash
 }
