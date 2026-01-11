@@ -462,7 +462,7 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 				"resetAt":    resetAt,
 				"resetAfter": resetAfter,
 				"identifier": q.identifier,
-				"route":      item.Req.URL.String(),
+				"path":       path,
 				"method":     item.Req.Method,
 			}).Debug("creating new bucket")
 
@@ -475,7 +475,7 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 				"resetAt":    resetAt,
 				"resetAfter": resetAfter,
 				"identifier": q.identifier,
-				"route":      item.Req.URL.String(),
+				"path":       path,
 				"method":     item.Req.Method,
 			}).Debug("updating existing bucket")
 
@@ -488,7 +488,7 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 			logger.WithFields(logrus.Fields{
 				"bucket":     bucketHash,
 				"identifier": q.identifier,
-				"route":      item.Req.URL.String(),
+				"path":       path,
 				"method":     item.Req.Method,
 			}).Debug("linking new bucket to route")
 
@@ -505,7 +505,7 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 			"identifier": q.identifier,
 			"route":      item.Req.URL.String(),
 			"method":     item.Req.Method,
-			"pathHash":   topBucketHash,
+			"path":       path,
 			// TODO: Remove this when 429s are not a problem anymore
 			"discordBucket":  bucketHash,
 			"ratelimitScope": scope,
@@ -598,8 +598,8 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHashInt, maj
 		// If this is a route with no ratelimits, then we will simply execute them all sequentially,
 		// which should be fine
 		//
-		// PathHashInt is a special case for "no ratelimits" endpoints
-		if (buckets == nil && majorBucketHashInt != 0) || !allowConcurrentRequests {
+		// majorBucketHashInt=0 is a special case for "no ratelimits" endpoints
+		if (buckets == nil || !allowConcurrentRequests) && majorBucketHashInt != 0 {
 			q.doRequest(ctx, item, ch, buckets, path, pathHash, majorBucketHash)
 		} else {
 			go q.doRequest(ctx, item, ch, buckets, path, pathHash, majorBucketHash)
