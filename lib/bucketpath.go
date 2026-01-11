@@ -147,7 +147,7 @@ func GetOptimisticBucketPath(url string, method string) (string, uint64) {
 	case MajorInteractions:
 		if numParts == 4 && parts[3] == "callback" {
 			// Hash 0 is a special case for "no ratelimits"
-			return "/" + MajorInteractions + "/" + parts[1] + "/!/callback", 0
+			return "/" + MajorInteractions + "/!/!/callback", 0
 		}
 		fallthrough
 	default:
@@ -196,6 +196,12 @@ func GetOptimisticBucketPath(url string, method string) (string, uint64) {
 			bucket.WriteString("/reactions/!/!")
 			//Reactions can only be followed by emoji/userid combo, since we don't care, break
 			break
+		}
+
+		// Strip webhook tokens and interaction tokens
+		if (currMajor == MajorWebhooks || currMajor == MajorInteractions) && len(part) >= 64 {
+			bucket.WriteString("/!")
+			continue
 		}
 
 		bucket.WriteByte('/')
