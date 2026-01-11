@@ -237,14 +237,14 @@ func safeSend(queue *QueueChannel, value *QueueItem) {
 	queue.ch <- value
 }
 
-func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash, bucketHash uint64) error {
+func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path string, pathHash, majorBucketHash uint64) error {
 	logger.WithFields(logrus.Fields{
 		"bucket": path,
 		"path":   req.URL.Path,
 		"method": req.Method,
 	}).Trace("Inbound request")
 
-	ch := q.getQueueChannel(path, pathHash, bucketHash)
+	ch := q.getQueueChannel(path, pathHash, majorBucketHash)
 
 	doneChan := make(chan *http.Response)
 	errChan := make(chan error)
@@ -259,7 +259,7 @@ func (q *RequestQueue) Queue(req *http.Request, res *http.ResponseWriter, path s
 	}
 }
 
-func (q *RequestQueue) getQueueChannel(path string, pathHash, bucketHash uint64) *QueueChannel {
+func (q *RequestQueue) getQueueChannel(path string, pathHash, majorBucketHash uint64) *QueueChannel {
 	t := time.Now()
 	q.Lock()
 	defer q.Unlock()
@@ -272,7 +272,7 @@ func (q *RequestQueue) getQueueChannel(path string, pathHash, bucketHash uint64)
 		}
 		q.queues[pathHash] = ch
 		// It's important that we only have 1 goroutine per channel
-		go q.subscribe(ch, path, bucketHash)
+		go q.subscribe(ch, path, pathHash, majorBucketHash)
 	} else {
 		ch.lastUsed = t
 	}
@@ -405,7 +405,7 @@ func (q *RequestQueue) getBucketsContextManager(ch *QueueChannel) *bucketsContex
 	return contextManager
 }
 
-func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *QueueChannel, buckets *bucketsContextManager, path, topBucketHash string) {
+func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *QueueChannel, buckets *bucketsContextManager, path, pathHash, topBucketHash string) {
 	if buckets != nil {
 		defer func() {
 			buckets.Release()
@@ -447,7 +447,7 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 	if bucketHash != "" || ratelimitHit {
 		if bucketHash == "" {
 			// We might have hit a Cloudflare 429, so we create a special bucket for that
-			bucketHash = "route" + ":" + topBucketHash
+			bucketHash = "route:" + pathHash
 		} else {
 			bucketHash = bucketHash + ":" + topBucketHash + ":" + scope
 		}
@@ -462,7 +462,6 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 				"resetAt":    resetAt,
 				"resetAfter": resetAfter,
 				"identifier": q.identifier,
-				"path":       path,
 				"route":      item.Req.URL.String(),
 				"method":     item.Req.Method,
 			}).Debug("creating new bucket")
@@ -476,7 +475,6 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 				"resetAt":    resetAt,
 				"resetAfter": resetAfter,
 				"identifier": q.identifier,
-				"path":       path,
 				"route":      item.Req.URL.String(),
 				"method":     item.Req.Method,
 			}).Debug("updating existing bucket")
@@ -492,7 +490,6 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 				"identifier": q.identifier,
 				"route":      item.Req.URL.String(),
 				"method":     item.Req.Method,
-				"path":       path,
 			}).Debug("linking new bucket to route")
 
 			ch.buckets = append(ch.buckets, bucketHash)
@@ -505,7 +502,6 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 		logger.WithFields(logrus.Fields{
 			"remaining":  remaining,
 			"resetAfter": resetAfter,
-			"bucket":     path,
 			"identifier": q.identifier,
 			"route":      item.Req.URL.String(),
 			"method":     item.Req.Method,
@@ -519,7 +515,6 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 
 	if resp.StatusCode == 404 && strings.HasPrefix(path, "/webhooks/") && !isInteraction(item.Req.URL.String()) {
 		logger.WithFields(logrus.Fields{
-			"bucket": path,
 			"route":  item.Req.URL.String(),
 			"method": item.Req.Method,
 		}).Info("Setting fail fast 404 for webhook")
@@ -533,7 +528,6 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 	if resp.StatusCode == 401 && !isInteraction(item.Req.URL.String()) && q.queueType != NoAuth {
 		// Permanently lock this queue
 		logger.WithFields(logrus.Fields{
-			"bucket":     path,
 			"route":      item.Req.URL.String(),
 			"method":     item.Req.Method,
 			"identifier": q.identifier,
@@ -547,11 +541,12 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 	}
 }
 
-func (q *RequestQueue) subscribe(ch *QueueChannel, path string, majorBucketHashInt uint64) {
+func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHashInt, majorBucketHashInt uint64) {
 	// This function has 1 goroutine for each bucket path
 	// Locking here is not needed
 
 	majorBucketHash := strconv.FormatUint(majorBucketHashInt, 10)
+	pathHash := strconv.FormatUint(pathHashInt, 10)
 
 	for item := range ch.ch {
 		ctx := context.WithValue(item.Req.Context(), "identifier", q.identifier)
@@ -605,9 +600,9 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, majorBucketHashI
 		//
 		// PathHashInt is a special case for "no ratelimits" endpoints
 		if (buckets == nil && majorBucketHashInt != 0) || !allowConcurrentRequests {
-			q.doRequest(ctx, item, ch, buckets, path, majorBucketHash)
+			q.doRequest(ctx, item, ch, buckets, path, pathHash, majorBucketHash)
 		} else {
-			go q.doRequest(ctx, item, ch, buckets, path, majorBucketHash)
+			go q.doRequest(ctx, item, ch, buckets, path, pathHash, majorBucketHash)
 		}
 	}
 }
