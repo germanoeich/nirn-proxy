@@ -24,10 +24,12 @@ const (
 )
 
 // Some routes that have @me on the path don't really spread out through the cluster, causing issues
-// and exacerbating tail latency hits from Discord. Only routes with no ratelimit headers should be put here
+// and exacerbating tail latency hits from Discord. Same goes for interaction callbacks.
+// Only routes with no ratelimit headers should be put here
 var pathsToRouteLocally = map[uint64]struct{}{
-	HashCRC64("/users/@me/channels"): {},
-	HashCRC64("/users/@me"):          {},
+	HashCRC64("/users/@me/channels"):        {},
+	HashCRC64("/users/@me"):                 {},
+	HashCRC64("/interactions/!/!/callback"): {},
 }
 
 type QueueManager struct {
