@@ -597,9 +597,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHashInt, maj
 		// create and populate the bucket when it's known, of it thats what the user wants
 		// If this is a route with no ratelimits, then we will simply execute them all sequentially,
 		// which should be fine
-		//
-		// majorBucketHashInt=0 is a special case for "no ratelimits" endpoints
-		if (buckets == nil || !allowConcurrentRequests) && majorBucketHashInt != 0 {
+		if buckets == nil || !allowConcurrentRequests {
 			q.doRequest(ctx, item, ch, buckets, path, pathHash, majorBucketHash)
 		} else {
 			go q.doRequest(ctx, item, ch, buckets, path, pathHash, majorBucketHash)

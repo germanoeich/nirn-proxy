@@ -146,8 +146,8 @@ func GetOptimisticBucketPath(url string, method string) (string, uint64) {
 		}
 	case MajorInteractions:
 		if numParts == 4 && parts[3] == "callback" {
-			// Hash 0 is a special case for "no ratelimits"
-			return "/" + MajorInteractions + "/!/!/callback", 0
+			majorParamsHash = majorParamHash(MajorInteractions, parts[1], parts[2])
+			return "/" + MajorInteractions + "/" + parts[1] + "/!/callback", majorParamsHash
 		}
 		fallthrough
 	default:
