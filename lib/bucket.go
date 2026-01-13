@@ -226,8 +226,8 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	}
 
 	if b.firstSeen && !b.outOfSync && remaining > 0 && remaining != limit-1 {
-		resetAtEq := isClose(float64(b.resetAt.UnixMilli()/1_000_000), resetAt, 0.05)
 		b.firstSeen = false
+		resetAtEq := isClose(float64(b.resetAt.UnixMilli())/1_000, resetAt, 0.05)
 
 		if !b.fixedWindow && resetAtEq {
 			logger.WithFields(logrus.Fields{
