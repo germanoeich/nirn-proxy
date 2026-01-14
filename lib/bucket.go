@@ -29,6 +29,10 @@ func calculateSlidingWindow(remaining, limit int64, resetAfter float64) (time.Du
 	return slidePeriod, increaseAt
 }
 
+func isFirstValidHeaders(remaining, limit int64) bool {
+	return remaining == limit-1 && remaining > 0 && limit != 1
+}
+
 // Bucket is a Discord bucket ratelimiter
 type Bucket struct {
 	increaseAt      time.Time
@@ -48,38 +52,39 @@ type Bucket struct {
 	inTransitLock sync.Mutex
 	acquireLock   sync.Mutex
 
-	outOfSync   bool
-	fixedWindow bool
-	firstSeen   bool
+	outOfSync         bool
+	fixedWindow       bool
+	typeChangeAllowed bool
 }
 
 func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float64) *Bucket {
-	var period time.Duration
-	var increaseAt time.Time
-	var fixedWindow bool
+	b := &Bucket{
+		bucket:            bucket,
+		remaining:         remaining,
+		limit:             limit,
+		resetAt:           time.Unix(0, int64(resetAt*1_000_000_000)),
+		outOfSync:         false,
+		typeChangeAllowed: true,
+	}
 
-	if limit != 1 && remaining == limit-1 {
+	if isFirstValidHeaders(remaining, limit) {
 		// We have the perfect condition for a sliding window, so assume that for now.
 		// Turning it into a fixed bucket later is preferable, as we might never get this chance again
-		period, increaseAt = calculateSlidingWindow(remaining, limit, resetAfter)
-		fixedWindow = false
+		b.period, b.increaseAt = calculateSlidingWindow(remaining, limit, resetAfter)
+		b.fixedWindow = false
 	} else {
 		// We can assume its a fixed bucket for now, and hope that in the future we will get
 		// the ideal condition
-		period, increaseAt = calculateFixedWindow(resetAt, resetAfter)
-		fixedWindow = true
+		b.period, b.increaseAt = calculateFixedWindow(resetAt, resetAfter)
+		b.fixedWindow = true
+
+		if limit == 1 {
+			// Bucket is 100% a fixed bucket
+			b.typeChangeAllowed = false
+		}
 	}
 
-	return &Bucket{
-		bucket:      bucket,
-		remaining:   remaining,
-		limit:       limit,
-		resetAt:     time.Unix(0, int64(resetAt*1_000_000_000)),
-		period:      period,
-		increaseAt:  increaseAt,
-		fixedWindow: fixedWindow,
-		firstSeen:   true,
-	}
+	return b
 }
 
 // Warning: this MUST be called from a locked state
@@ -102,7 +107,7 @@ func (b *Bucket) isRatelimited(now time.Time) bool {
 			b.outOfSync = true
 		} else {
 			// Slide window along
-			gain := int64(math.Ceil((now.Sub(b.increaseAt).Seconds()) / b.period.Seconds()))
+			gain := int64(math.Floor((now.Sub(b.increaseAt).Seconds())/b.period.Seconds())) + 1
 
 			b.remaining = min(b.remaining+gain, b.limit)
 
@@ -210,9 +215,14 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	resetAfterDuration := time.Duration(resetAfter*1_000) * time.Millisecond
 	serverUpdatedAt := resetAtTime.Add(-resetAfterDuration)
 
-	if b.serverUpdatedAt.Before(serverUpdatedAt) {
-		b.serverUpdatedAt = serverUpdatedAt
+	if b.serverUpdatedAt.After(serverUpdatedAt) {
+		// Old ratelimit information, ignore
+		return
 	}
+
+	b.serverUpdatedAt = serverUpdatedAt
+
+	firstValidHeaders := isFirstValidHeaders(remaining, limit)
 
 	if ratelimitHit {
 		// During ratelimit avoidance, we will treat the bucket as fixed
@@ -224,8 +234,8 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 		return
 	}
 
-	if b.firstSeen && !b.outOfSync && remaining > 0 && remaining != limit-1 {
-		b.firstSeen = false
+	if b.typeChangeAllowed && !b.outOfSync && !firstValidHeaders {
+		b.typeChangeAllowed = false
 		resetAtEq := isClose(float64(b.resetAt.UnixMilli())/1_000, resetAt, 0.05)
 
 		if resetAtEq {
@@ -237,8 +247,7 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 
 			if !b.fixedWindow {
 				b.fixedWindow = true
-				// Setting this here will have an effect below
-				b.outOfSync = true
+				b.period, b.increaseAt = calculateFixedWindow(resetAt, resetAfter)
 			}
 
 		} else {
@@ -250,27 +259,31 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 
 			if b.fixedWindow {
 				b.fixedWindow = false
-				// Setting this here will have an effect below
-				b.outOfSync = true
+				b.period, b.increaseAt = calculateSlidingWindow(remaining, limit, resetAfter)
 			}
 		}
 	}
 
-	if b.resetAt.Before(resetAtTime) {
-		b.resetAt = resetAtTime
-	}
+	b.resetAt = resetAtTime
 
-	if b.outOfSync || (limit != 1 && remaining == limit-1) {
+	if b.outOfSync || firstValidHeaders {
+		var period time.Duration
+		var increaseAt time.Time
+
 		if b.fixedWindow {
-			period, increaseAt := calculateFixedWindow(resetAt, resetAfter)
-			b.period = period
-			b.increaseAt = increaseAt
+			period, increaseAt = calculateFixedWindow(resetAt, resetAfter)
 		} else {
-			period, increaseAt := calculateSlidingWindow(remaining, limit, resetAfter)
-			b.period = period
-			b.increaseAt = increaseAt
+			period, increaseAt = calculateSlidingWindow(remaining, limit, resetAfter)
 		}
 
 		b.outOfSync = false
+
+		// Prevent both from decreasing
+		if b.increaseAt.Before(increaseAt) {
+			b.increaseAt = increaseAt
+		}
+		if period > b.period {
+			b.period = period
+		}
 	}
 }
