@@ -102,10 +102,9 @@ func (b *Bucket) isRatelimited(now time.Time) bool {
 			b.outOfSync = true
 		} else {
 			// Slide window along
-			gain := int64(math.Floor((now.Sub(b.increaseAt).Seconds())/b.period.Seconds())) + 1
-			nowRemaining := b.remaining + gain
+			gain := int64(math.Ceil((now.Sub(b.increaseAt).Seconds()) / b.period.Seconds()))
 
-			b.remaining = min(nowRemaining, b.limit)
+			b.remaining = min(b.remaining+gain, b.limit)
 
 			if b.remaining == b.limit {
 				// When a ratelimit resets, we will fall out of sync from the remote, so
@@ -218,7 +217,7 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	if ratelimitHit {
 		// During ratelimit avoidance, we will treat the bucket as fixed
 		// bucket and wait for it to fill up completely
-		_, b.increaseAt = calculateFixedWindow(resetAt, resetAfter)
+		b.increaseAt = resetAtTime
 		b.resetAt = resetAtTime
 		b.remaining = 0
 		b.outOfSync = false
@@ -229,25 +228,31 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 		b.firstSeen = false
 		resetAtEq := isClose(float64(b.resetAt.UnixMilli())/1_000, resetAt, 0.05)
 
-		if !b.fixedWindow && resetAtEq {
+		if resetAtEq {
 			logger.WithFields(logrus.Fields{
 				"bucket":          b.bucket,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
 			}).Debug("bucket detected to be a fixed bucket")
-			b.fixedWindow = true
-			// Setting this here will have an effect below
-			b.outOfSync = true
 
-		} else if b.fixedWindow && !resetAtEq {
+			if !b.fixedWindow {
+				b.fixedWindow = true
+				// Setting this here will have an effect below
+				b.outOfSync = true
+			}
+
+		} else {
 			logger.WithFields(logrus.Fields{
 				"bucket":          b.bucket,
 				"storedResetAt":   b.resetAt,
 				"receivedResetAt": resetAt,
 			}).Debug("bucket detected to be a sliding bucket")
-			b.fixedWindow = false
-			// Setting this here will have an effect below
-			b.outOfSync = true
+
+			if b.fixedWindow {
+				b.fixedWindow = false
+				// Setting this here will have an effect below
+				b.outOfSync = true
+			}
 		}
 	}
 
