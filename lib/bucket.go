@@ -227,8 +227,12 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	if ratelimitHit {
 		// During ratelimit avoidance, we will treat the bucket as fixed
 		// bucket and wait for it to fill up completely
-		b.increaseAt = resetAtTime
-		b.resetAt = resetAtTime
+		if b.increaseAt.Before(resetAtTime) {
+			b.increaseAt = resetAtTime
+		}
+		if b.resetAt.Before(resetAtTime) {
+			b.resetAt = resetAtTime
+		}
 		b.remaining = 0
 		b.outOfSync = false
 		return
@@ -264,7 +268,9 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 		}
 	}
 
-	b.resetAt = resetAtTime
+	if b.resetAt.Before(resetAtTime) {
+		b.resetAt = resetAtTime
+	}
 
 	if b.outOfSync || firstValidHeaders {
 		var period time.Duration
