@@ -266,7 +266,7 @@ func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http
 		logger.WithFields(logrus.Fields{"method": req.Method, "url": req.URL.RawPath}).Warn("path traversal detected, dropping request")
 		resp.Header().Set("generated-by-proxy", "true")
 		resp.Header().Set("reason", "path traversal")
-		resp.WriteHeader(400)
+		resp.WriteHeader(422)
 		return
 	}
 
