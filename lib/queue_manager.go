@@ -249,8 +249,27 @@ func (m *QueueManager) getOrCreateBearerQueue(token string) (*RequestQueue, erro
 	return q.(*RequestQueue), nil
 }
 
+func isPathTraversal(path string) bool {
+	segments := strings.Split(path, "/")
+	for _, segment := range segments {
+		if segment == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http.Request) {
 	reqStart := time.Now()
+
+	if isPathTraversal(req.URL.Path) {
+		logger.WithFields(logrus.Fields{"method": req.Method, "url": req.URL.RawPath}).Warn("path traversal detected, dropping request")
+		resp.Header().Set("generated-by-proxy", "true")
+		resp.Header().Set("reason", "path traversal")
+		resp.WriteHeader(400)
+		return
+	}
+
 	metricsPath := GetMetricsPath(req.URL.Path)
 	ConnectionsOpen.With(map[string]string{"route": metricsPath, "method": req.Method}).Inc()
 	defer ConnectionsOpen.With(map[string]string{"route": metricsPath, "method": req.Method}).Dec()
