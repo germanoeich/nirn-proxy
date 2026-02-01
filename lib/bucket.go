@@ -215,12 +215,9 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	resetAfterDuration := time.Duration(resetAfter*1_000) * time.Millisecond
 	serverUpdatedAt := resetAtTime.Add(-resetAfterDuration)
 
-	if b.serverUpdatedAt.After(serverUpdatedAt) {
-		// Old ratelimit information, ignore
-		return
+	if b.serverUpdatedAt.Before(serverUpdatedAt) {
+		b.serverUpdatedAt = serverUpdatedAt
 	}
-
-	b.serverUpdatedAt = serverUpdatedAt
 
 	firstValidHeaders := isFirstValidHeaders(remaining, limit)
 
