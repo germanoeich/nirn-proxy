@@ -65,6 +65,7 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 		resetAt:           time.Unix(0, int64(resetAt*1_000_000_000)),
 		outOfSync:         false,
 		typeChangeAllowed: true,
+		lastUpdatedAt:     time.Now(),
 	}
 
 	if isFirstValidHeaders(remaining, limit) {
@@ -214,8 +215,6 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	b.lastUpdatedAt = time.Now()
 	resetAtTime := time.Unix(0, int64(resetAt*1_000_000_000))
 
-	firstValidHeaders := isFirstValidHeaders(remaining, limit)
-
 	if ratelimitHit {
 		// During ratelimit avoidance, we will treat the bucket as fixed
 		// bucket and wait for it to fill up completely
@@ -230,6 +229,8 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 		return
 	}
 
+	firstValidHeaders := isFirstValidHeaders(remaining, limit)
+
 	if b.typeChangeAllowed && !b.outOfSync && !firstValidHeaders {
 		b.typeChangeAllowed = false
 		resetAtEq := isClose(float64(b.resetAt.UnixMilli())/1_000, resetAt, 0.05)
@@ -238,7 +239,7 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 			logger.WithFields(logrus.Fields{
 				"bucket":          b.bucket,
 				"storedResetAt":   b.resetAt,
-				"receivedResetAt": resetAt,
+				"receivedResetAt": resetAtTime,
 			}).Debug("bucket detected to be a fixed bucket")
 
 			if !b.fixedWindow {
@@ -250,7 +251,7 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 			logger.WithFields(logrus.Fields{
 				"bucket":          b.bucket,
 				"storedResetAt":   b.resetAt,
-				"receivedResetAt": resetAt,
+				"receivedResetAt": resetAtTime,
 			}).Debug("bucket detected to be a sliding bucket")
 
 			if b.fixedWindow {
