@@ -25,13 +25,18 @@ var bufferSize = 50
 
 func setupLogger() {
 	logLevel := lib.EnvGet("LOG_LEVEL", "info")
-	lvl, err := logrus.ParseLevel(logLevel)
 
+	lvl, err := logrus.ParseLevel(logLevel)
 	if err != nil {
 		panic("Failed to parse log level")
 	}
 
+	logger.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: time.RFC3339Nano,
+	})
 	logger.SetLevel(lvl)
+
 	lib.SetLogger(logger)
 }
 
