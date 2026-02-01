@@ -39,12 +39,12 @@ type Bucket struct {
 	transitWaitChan chan interface{}
 
 	// under stateLock
-	bucket          string
-	remaining       int64
-	limit           int64
-	period          time.Duration
-	resetAt         time.Time
-	serverUpdatedAt time.Time
+	bucket        string
+	remaining     int64
+	limit         int64
+	period        time.Duration
+	resetAt       time.Time
+	lastUpdatedAt time.Time
 	// under inTransitLock
 	inTransit int64
 
@@ -211,13 +211,8 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	b.stateLock.Lock()
 	defer b.stateLock.Unlock()
 
+	b.lastUpdatedAt = time.Now()
 	resetAtTime := time.Unix(0, int64(resetAt*1_000_000_000))
-	resetAfterDuration := time.Duration(resetAfter*1_000) * time.Millisecond
-	serverUpdatedAt := resetAtTime.Add(-resetAfterDuration)
-
-	if b.serverUpdatedAt.Before(serverUpdatedAt) {
-		b.serverUpdatedAt = serverUpdatedAt
-	}
 
 	firstValidHeaders := isFirstValidHeaders(remaining, limit)
 
