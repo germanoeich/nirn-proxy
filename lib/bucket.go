@@ -30,7 +30,7 @@ func calculateSlidingWindow(remaining, limit int64, resetAfter float64) (time.Du
 }
 
 func isFirstValidHeaders(remaining, limit int64) bool {
-	return remaining == limit-1 && remaining > 0 && limit != 1
+	return remaining == limit-1 && limit != 1
 }
 
 // Bucket is a Discord bucket ratelimiter

@@ -204,7 +204,7 @@ func (q *RequestQueue) sweepBuckets() {
 	for key, val := range q.buckets {
 		// This is technically a data race, but we are looking for buckets that are insanely
 		// unused, so we can afford the data race
-		if time.Since(val.serverUpdatedAt) > 30*time.Second {
+		if time.Since(val.serverUpdatedAt) > 1*time.Minute {
 			delete(q.buckets, key)
 			sweptEntries++
 		}
