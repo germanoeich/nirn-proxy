@@ -55,6 +55,7 @@ type Bucket struct {
 	outOfSync         bool
 	fixedWindow       bool
 	typeChangeAllowed bool
+	closedChan        chan struct{}
 }
 
 func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float64) *Bucket {
@@ -62,8 +63,8 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 		bucket:            bucket,
 		remaining:         remaining,
 		limit:             limit,
-		resetAt:           time.Unix(0, int64(resetAt*1_000_000_000)),
 		outOfSync:         false,
+		closedChan:        make(chan struct{}, 1),
 		typeChangeAllowed: true,
 		lastUpdatedAt:     time.Now(),
 	}
@@ -73,11 +74,13 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 		// Turning it into a fixed bucket later is preferable, as we might never get this chance again
 		b.period, b.increaseAt = calculateSlidingWindow(remaining, limit, resetAfter)
 		b.fixedWindow = false
+		b.resetAt = time.Now().Add(b.period * time.Duration(b.limit))
 	} else {
 		// We can assume its a fixed bucket for now, and hope that in the future we will get
 		// the ideal condition
 		b.period, b.increaseAt = calculateFixedWindow(resetAt, resetAfter)
 		b.fixedWindow = true
+		b.resetAt = time.Unix(0, int64(resetAt*1_000_000_000))
 
 		if limit == 1 {
 			// Bucket is 100% a fixed bucket
@@ -89,11 +92,13 @@ func NewBucket(bucket string, remaining, limit int64, resetAt, resetAfter float6
 }
 
 // Warning: this MUST be called from a locked state
+// Warning: `now` must be the current time. Passing a present or past value is undefined behaviour
 func (b *Bucket) isRatelimited(now time.Time) bool {
 	canIncrease := now.After(b.increaseAt)
 	canReset := now.After(b.resetAt)
 
-	if (canIncrease && !b.outOfSync) || canReset {
+	// inTransit check is performed to avoid deadlocks
+	if (canIncrease && !b.outOfSync && b.inTransit != 1) || canReset {
 		if b.fixedWindow {
 			// Fixed windows just reset the remaining back to the limit
 			b.remaining = b.limit
@@ -132,6 +137,9 @@ func (b *Bucket) isRatelimited(now time.Time) bool {
 func (b *Bucket) Acquire(ctx context.Context) error {
 	b.acquireLock.Lock()
 	defer b.acquireLock.Unlock()
+	if b.closedChan == nil {
+		return nil
+	}
 
 	b.inTransitLock.Lock()
 	if b.inTransit >= b.limit {
@@ -139,6 +147,8 @@ func (b *Bucket) Acquire(ctx context.Context) error {
 		b.transitWaitChan = make(chan interface{}, 1)
 		b.inTransitLock.Unlock()
 		select {
+		case <-b.closedChan:
+			break
 		case <-ctx.Done():
 			b.inTransitLock.Lock()
 			if b.transitWaitChan != nil {
@@ -179,6 +189,8 @@ func (b *Bucket) Acquire(ctx context.Context) error {
 		}
 
 		select {
+		case <-b.closedChan:
+			break
 		case <-ctx.Done():
 			b.Release()
 			return ctx.Err()
@@ -191,6 +203,7 @@ func (b *Bucket) Acquire(ctx context.Context) error {
 	return nil
 }
 
+// Release returns the slot to the bucket
 func (b *Bucket) Release() {
 	b.inTransitLock.Lock()
 	defer b.inTransitLock.Unlock()
@@ -208,6 +221,7 @@ func (b *Bucket) Release() {
 	}
 }
 
+// Update updates the bucket with new ratelimit information
 func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, ratelimitHit bool) {
 	b.stateLock.Lock()
 	defer b.stateLock.Unlock()
@@ -218,12 +232,8 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 	if ratelimitHit {
 		// During ratelimit avoidance, we will treat the bucket as fixed
 		// bucket and wait for it to fill up completely
-		if b.increaseAt.Before(resetAtTime) {
-			b.increaseAt = resetAtTime
-		}
-		if b.resetAt.Before(resetAtTime) {
-			b.resetAt = resetAtTime
-		}
+		b.increaseAt = resetAtTime
+		b.resetAt = resetAtTime
 		b.remaining = 0
 		b.outOfSync = false
 		return
@@ -231,7 +241,7 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 
 	firstValidHeaders := isFirstValidHeaders(remaining, limit)
 
-	if b.typeChangeAllowed && !b.outOfSync && !firstValidHeaders {
+	if b.typeChangeAllowed && !b.outOfSync && !firstValidHeaders && remaining > 0 {
 		b.typeChangeAllowed = false
 		resetAtEq := isClose(float64(b.resetAt.UnixMilli())/1_000, resetAt, 0.05)
 
@@ -244,7 +254,8 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 
 			if !b.fixedWindow {
 				b.fixedWindow = true
-				b.period, b.increaseAt = calculateFixedWindow(resetAt, resetAfter)
+				// Setting this here will have an effect below
+				b.outOfSync = true
 			}
 
 		} else {
@@ -256,14 +267,13 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 
 			if b.fixedWindow {
 				b.fixedWindow = false
-				b.period, b.increaseAt = calculateSlidingWindow(remaining, limit, resetAfter)
+				// Setting this here will have an effect below
+				b.outOfSync = true
 			}
 		}
 	}
 
-	if b.resetAt.Before(resetAtTime) {
-		b.resetAt = resetAtTime
-	}
+	b.resetAt = resetAtTime
 
 	if b.outOfSync || firstValidHeaders {
 		var period time.Duration
@@ -281,8 +291,22 @@ func (b *Bucket) Update(remaining, limit int64, resetAt, resetAfter float64, rat
 		if b.increaseAt.Before(increaseAt) {
 			b.increaseAt = increaseAt
 		}
-		if period > b.period {
-			b.period = period
-		}
+		b.period = period
 	}
+}
+
+// Close marks the bucket as closed and immediately returns from any and future Acquire calls.
+// The bucket should not be used from this point onwards
+func (b *Bucket) Close() {
+	if b.closedChan == nil {
+		return
+	}
+
+	logger.WithFields(logrus.Fields{
+		"bucket": b.bucket,
+	}).Debug("bucket closed")
+
+	closedChan := b.closedChan
+	b.closedChan = nil
+	closedChan <- struct{}{}
 }

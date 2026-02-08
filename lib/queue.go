@@ -184,7 +184,7 @@ func (q *RequestQueue) destroy() {
 func (q *RequestQueue) sweepQueues() {
 	q.Lock()
 	defer q.Unlock()
-	logger.Info("Queues Sweep start")
+	logger.Info("Queues sweep start")
 	sweptEntries := 0
 	for key, val := range q.queues {
 		if time.Since(val.lastUsed) > 10*time.Minute {
@@ -206,6 +206,7 @@ func (q *RequestQueue) sweepBuckets() {
 		// unused, so we can afford the data race
 		if time.Since(val.lastUpdatedAt) > 1*time.Minute {
 			delete(q.buckets, key)
+			val.Close()
 			sweptEntries++
 		}
 	}
@@ -440,9 +441,8 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 		return
 	}
 
-	// TODO: Consider handling special retry case for POST /users/@me/channels
-
 	ratelimitHit := resp.StatusCode == 429
+	multiBucket := false
 
 	if bucketHash != "" || ratelimitHit {
 		if bucketHash == "" {
@@ -486,29 +486,31 @@ func (q *RequestQueue) doRequest(ctx context.Context, item *QueueItem, ch *Queue
 		ch.Lock()
 		if !slices.Contains(ch.buckets, bucketHash) {
 			logger.WithFields(logrus.Fields{
-				"bucket":     bucketHash,
-				"identifier": q.identifier,
-				"path":       path,
-				"method":     item.Req.Method,
+				"bucket":            bucketHash,
+				"identifier":        q.identifier,
+				"path":              path,
+				"method":            item.Req.Method,
+				"additionalBuckets": ch.buckets,
 			}).Debug("linking new bucket to route")
 
 			ch.buckets = append(ch.buckets, bucketHash)
 		}
+		multiBucket = len(ch.buckets) > 1
 		ch.Unlock()
 
 	}
 
 	if ratelimitHit && scope != "shared" {
 		logger.WithFields(logrus.Fields{
-			"remaining":  remaining,
-			"resetAfter": resetAfter,
-			"identifier": q.identifier,
-			"route":      item.Req.URL.String(),
-			"method":     item.Req.Method,
-			"path":       path,
-			// TODO: Remove this when 429s are not a problem anymore
-			"discordBucket":  bucketHash,
-			"ratelimitScope": scope,
+			"remaining":             remaining,
+			"resetAfter":            resetAfter,
+			"identifier":            q.identifier,
+			"route":                 item.Req.URL.String(),
+			"method":                item.Req.Method,
+			"path":                  path,
+			"discordBucket":         bucketHash,
+			"ratelimitScope":        scope,
+			"multipleBucketsInPath": multiBucket,
 		}).Warn("Unexpected 429")
 		return
 	}
