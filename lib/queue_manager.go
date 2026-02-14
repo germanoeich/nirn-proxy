@@ -288,7 +288,7 @@ func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (r
 		routingHash = HashCRC64(token)
 	} else {
 		queueType = Bot
-		routingHash = HashCRC64(req.Method + path)
+		routingHash = HashCRC64(path)
 	}
 	return
 }
