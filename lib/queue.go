@@ -1,17 +1,21 @@
 package lib
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"github.com/Clever/leakybucket"
-	"github.com/Clever/leakybucket/memory"
-	"github.com/sirupsen/logrus"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Clever/leakybucket"
+	"github.com/Clever/leakybucket/memory"
+	"github.com/sirupsen/logrus"
 )
 
 type QueueItem struct {
@@ -273,6 +277,11 @@ func return401(item *QueueItem) {
 	item.doneChan <- nil
 }
 
+func isUnknownWebhook(_body io.ReadCloser) bool {
+	body, _ := ioutil.ReadAll(_body);
+	return bytes.Contains(body, []byte("\"code\": 10015"))
+}
+
 func isInteraction(url string) bool {
 	parts := strings.Split(strings.SplitN(url, "?", 1)[0], "/")
 	for _, p := range parts {
@@ -349,7 +358,7 @@ func (q *RequestQueue) subscribe(ch *QueueChannel, path string, pathHash uint64)
 			}).Warn("Unexpected 429")
 		}
 
-		if resp.StatusCode == 404 && strings.HasPrefix(path, "/webhooks/") && !isInteraction(item.Req.URL.String()) {
+		if resp.StatusCode == 404 && isUnknownWebhook(resp.Body) && !isInteraction(item.Req.URL.String()) {
 			logger.WithFields(logrus.Fields{
 				"bucket": path,
 				"route":  item.Req.URL.String(),

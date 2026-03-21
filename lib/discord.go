@@ -5,15 +5,17 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 var client *http.Client
@@ -217,6 +219,21 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 }
 
 func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
+	route := GetMetricsPath(path)
+	if route == "/channels/!/messages/!/reactions/!/!" {
+		segs := strings.Split(path, "/")
+		emojiIdx := 7
+		if strings.HasPrefix(path, "/") {
+			emojiIdx = 8
+		}
+		if emojiIdx < len(segs) {
+			unescaped, _ := url.PathUnescape(segs[emojiIdx])
+			if segs[emojiIdx] == unescaped {
+				segs[emojiIdx] = url.PathEscape(segs[emojiIdx])
+			}
+			path = strings.Join(segs, "/")
+		}
+	}
 	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com"+path+"?"+query, body)
 	if err != nil {
 		return nil, err
@@ -233,7 +250,6 @@ func doDiscordReq(ctx context.Context, path string, method string, body io.ReadC
 	}
 
 	if err == nil {
-		route := GetMetricsPath(path)
 		status := discordResp.Status
 		method := discordResp.Request.Method
 		elapsed := time.Since(startTime).Seconds()

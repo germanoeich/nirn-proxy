@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"bytes"
 	"io/ioutil"
 	"net/http"
 	"strings"
@@ -34,5 +35,6 @@ func CopyResponseToResponseWriter(resp *http.Response, respWriter *http.Response
 	if err != nil {
 		return err
 	}
+	resp.Body = ioutil.NopCloser(bytes.NewReader(body))
 	return nil
 }
