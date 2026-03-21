@@ -3,15 +3,16 @@ package lib
 import (
 	"context"
 	"errors"
-	lru "github.com/hashicorp/golang-lru"
-	"github.com/hashicorp/memberlist"
-	"github.com/sirupsen/logrus"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	lru "github.com/hashicorp/golang-lru"
+	"github.com/hashicorp/memberlist"
+	"github.com/sirupsen/logrus"
 )
 
 type QueueType int64
@@ -23,25 +24,27 @@ const (
 )
 
 // Some routes that have @me on the path don't really spread out through the cluster, causing issues
-// and exacerbating tail latency hits from Discord. Only routes with no ratelimit headers should be put here
+// and exacerbating tail latency hits from Discord. Same goes for interaction callbacks.
+// Only routes with no ratelimit headers should be put here
 var pathsToRouteLocally = map[uint64]struct{}{
-	HashCRC64("/users/@me/channels"): {},
-	HashCRC64("/users/@me"):          {},
+	HashCRC64("/users/@me/channels"):        {},
+	HashCRC64("/users/@me"):                 {},
+	HashCRC64("/interactions/!/!/callback"): {},
 }
 
 type QueueManager struct {
-	sync.RWMutex
 	queues                   map[string]*RequestQueue
 	bearerQueues             *lru.Cache
-	bearerMu                 sync.RWMutex
-	bufferSize               int
 	cluster                  *memberlist.Memberlist
 	clusterGlobalRateLimiter *ClusterGlobalRateLimiter
-	orderedClusterMembers    []string
 	nameToAddressMap         map[string]string
 	localNodeName            string
 	localNodeIP              string
 	localNodeProxyListenAddr string
+	orderedClusterMembers    []string
+	bufferSize               int
+	sync.RWMutex
+	bearerMu sync.RWMutex
 }
 
 func onEvictLruItem(key interface{}, value interface{}) {
@@ -246,20 +249,39 @@ func (m *QueueManager) getOrCreateBearerQueue(token string) (*RequestQueue, erro
 	return q.(*RequestQueue), nil
 }
 
+func isPathTraversal(path string) bool {
+	segments := strings.Split(path, "/")
+	for _, segment := range segments {
+		if segment == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *QueueManager) DiscordRequestHandler(resp http.ResponseWriter, req *http.Request) {
 	reqStart := time.Now()
+
+	if isPathTraversal(req.URL.Path) {
+		logger.WithFields(logrus.Fields{"method": req.Method, "url": req.URL.RawPath}).Warn("path traversal detected, dropping request")
+		resp.Header().Set("generated-by-proxy", "true")
+		resp.Header().Set("reason", "path traversal")
+		resp.WriteHeader(422)
+		return
+	}
+
 	metricsPath := GetMetricsPath(req.URL.Path)
 	ConnectionsOpen.With(map[string]string{"route": metricsPath, "method": req.Method}).Inc()
 	defer ConnectionsOpen.With(map[string]string{"route": metricsPath, "method": req.Method}).Dec()
 
 	token := req.Header.Get("Authorization")
-	routingHash, path, queueType := m.GetRequestRoutingInfo(req, token)
+	routingHash, majorBucketHash, path, queueType := m.GetRequestRoutingInfo(req, token)
 
-	m.fulfillRequest(&resp, req, queueType, path, routingHash, token, reqStart)
+	m.fulfillRequest(&resp, req, queueType, path, routingHash, majorBucketHash, token, reqStart)
 }
 
-func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (routingHash uint64, path string, queueType QueueType) {
-	path = GetOptimisticBucketPath(req.URL.Path, req.Method)
+func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (routingHash, majorBucketHash uint64, path string, queueType QueueType) {
+	path, majorBucketHash = GetOptimisticBucketPath(req.URL.Path, req.Method)
 	queueType = NoAuth
 	routingHash = HashCRC64(path)
 
@@ -273,7 +295,7 @@ func (m *QueueManager) GetRequestRoutingInfo(req *http.Request, token string) (r
 	return
 }
 
-func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Request, queueType QueueType, path string, pathHash uint64, token string, reqStart time.Time) {
+func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Request, queueType QueueType, path string, pathHash, majorBucketHash uint64, token string, reqStart time.Time) {
 	logEntry := logger.WithField("clientIp", req.RemoteAddr)
 	forwdFor := req.Header.Get("X-Forwarded-For")
 	if forwdFor != "" {
@@ -332,11 +354,15 @@ func (m *QueueManager) fulfillRequest(resp *http.ResponseWriter, req *http.Reque
 				}
 			}
 		}
-		err = q.Queue(req, resp, path, pathHash)
+		err = q.Queue(req, resp, path, pathHash, majorBucketHash)
 		if err != nil {
 			log := logEntry.WithField("function", "Queue")
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				log.WithField("waitedFor", time.Since(reqStart)).Warn(err)
+				log.WithFields(logrus.Fields{
+					"waitedFor": time.Since(reqStart),
+					"method":    req.Method,
+					"route":     req.URL.Path,
+				}).Warn(err)
 			} else {
 				log.Error(err)
 			}

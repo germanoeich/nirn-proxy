@@ -75,6 +75,13 @@ Default: false
 
 In the future, this will be the only possible behavior.
 
+##### ALLOW_CONCURRENT_REQUESTS
+Allows nirn to perform concurrent requests to Discord endpoints, instead of one at a time per queue. This might have the unintended side effect of a small increase in 429's if Discord updates buckets on the fly.
+
+If you do not care about throughput or do not make a lot of requests to the same endpoint that might take Discord a while to answer, then it would be fine to keep this off.
+
+Default: true
+
 ## Unstable env vars
 Collection of env vars that may be removed at any time, mainly used for Discord introducing new behaviour on their edge api versions
 

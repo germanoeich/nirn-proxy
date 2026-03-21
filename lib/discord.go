@@ -1,13 +1,13 @@
 package lib
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"github.com/sirupsen/logrus"
 	"io"
-	"io/ioutil"
 	"math"
 	"net"
 	"net/http"
@@ -23,6 +23,7 @@ var contextTimeout time.Duration
 var globalOverrideMap = make(map[string]uint)
 
 var disableRestLimitDetection = false
+var allowConcurrentRequests = false
 
 type BotGatewayResponse struct {
 	SessionStartLimit map[string]int `json:"session_start_limit"`
@@ -88,7 +89,7 @@ func createTransport(ip string, disableHttp2 bool) http.RoundTripper {
 }
 
 func parseGlobalOverrides(overrides string) {
-	// Format: "<bot_id>:<bot_global_limit>,<bot_id>:<bot_global_limit>
+	// Format: "<bot_id>:<bot_global_limit>,<bot_id>:<bot_global_limit>"
 
 	if overrides == "" {
 		return
@@ -111,7 +112,7 @@ func parseGlobalOverrides(overrides string) {
 	}
 }
 
-func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, disableHttp2 bool, globalOverrides string, disableRestDetection bool) {
+func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, globalOverrides string, disableHttp2, disableRestDetection, allowConcurrent bool) {
 	transport := createTransport(ip, disableHttp2)
 	client = &http.Client{
 		Transport: transport,
@@ -121,6 +122,7 @@ func ConfigureDiscordHTTPClient(ip string, timeout time.Duration, disableHttp2 b
 	contextTimeout = timeout
 
 	disableRestLimitDetection = disableRestDetection
+	allowConcurrentRequests = allowConcurrent
 
 	parseGlobalOverrides(globalOverrides)
 }
@@ -165,7 +167,7 @@ func GetBotGlobalLimit(token string, user *BotUserResponse) (uint, error) {
 		return 0, errors.New("500 on gateway/bot")
 	}
 
-	body, _ := ioutil.ReadAll(bot.Body)
+	body, _ := io.ReadAll(bot.Body)
 
 	var s BotGatewayResponse
 
@@ -204,7 +206,7 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 		return nil, errors.New("500 on users/@me")
 	}
 
-	body, _ := ioutil.ReadAll(bot.Body)
+	body, _ := io.ReadAll(bot.Body)
 
 	var s BotUserResponse
 
@@ -216,7 +218,7 @@ func GetBotUser(token string) (*BotUserResponse, error) {
 	return &s, nil
 }
 
-func doDiscordReq(ctx context.Context, path string, method string, body io.ReadCloser, header http.Header, query string) (*http.Response, error) {
+func doDiscordReq(ctx context.Context, path string, method string, body io.Reader, header http.Header, query string) (*http.Response, error) {
 	discordReq, err := http.NewRequestWithContext(ctx, method, "https://discord.com"+path+"?"+query, body)
 	if err != nil {
 		return nil, err
@@ -255,10 +257,10 @@ func ProcessRequest(ctx context.Context, item *QueueItem) (*http.Response, error
 
 	ctx, cancel := context.WithTimeout(ctx, contextTimeout)
 	defer cancel()
-	discordResp, err := doDiscordReq(ctx, req.URL.Path, req.Method, req.Body, req.Header.Clone(), req.URL.RawQuery)
+	discordResp, err := doDiscordReq(ctx, req.URL.Path, req.Method, bytes.NewReader(item.ReqBody), req.Header.Clone(), req.URL.RawQuery)
 
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			res.WriteHeader(408)
 		} else {
 			res.WriteHeader(500)

@@ -2,10 +2,7 @@ package main
 
 import (
 	"context"
-	"github.com/germanoeich/nirn-proxy/lib"
-	"github.com/hashicorp/memberlist"
-	_ "github.com/joho/godotenv/autoload"
-	"github.com/sirupsen/logrus"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +10,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/hashicorp/memberlist"
+	_ "github.com/joho/godotenv/autoload"
+	"github.com/sirupsen/logrus"
+
+	"github.com/germanoeich/nirn-proxy/lib"
 )
 
 var logger = logrus.New()
@@ -22,13 +25,18 @@ var bufferSize = 50
 
 func setupLogger() {
 	logLevel := lib.EnvGet("LOG_LEVEL", "info")
-	lvl, err := logrus.ParseLevel(logLevel)
 
+	lvl, err := logrus.ParseLevel(logLevel)
 	if err != nil {
 		panic("Failed to parse log level")
 	}
 
+	logger.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: time.RFC3339Nano,
+	})
 	logger.SetLevel(lvl)
+
 	lib.SetLogger(logger)
 }
 
@@ -75,8 +83,9 @@ func main() {
 	globalOverrides := lib.EnvGet("BOT_RATELIMIT_OVERRIDES", "")
 
 	disableGlobalRatelimitDetection := lib.EnvGetBool("DISABLE_GLOBAL_RATELIMIT_DETECTION", false)
+	allowConcurrentRequests := lib.EnvGetBool("ALLOW_CONCURRENT_REQUESTS", true)
 
-	lib.ConfigureDiscordHTTPClient(outboundIp, time.Duration(timeout)*time.Millisecond, disableHttp2, globalOverrides, disableGlobalRatelimitDetection)
+	lib.ConfigureDiscordHTTPClient(outboundIp, time.Duration(timeout)*time.Millisecond, globalOverrides, disableHttp2, disableGlobalRatelimitDetection, allowConcurrentRequests)
 
 	port := lib.EnvGet("PORT", "8080")
 	bindIp := lib.EnvGet("BIND_IP", "0.0.0.0")
@@ -108,11 +117,11 @@ func main() {
 		go lib.StartMetrics(bindIp + ":" + port)
 	}
 
-	done := make(chan os.Signal, 1)
+	done := make(chan os.Signal)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.WithFields(logrus.Fields{"function": "http.ListenAndServe"}).Panic(err)
 		}
 	}()

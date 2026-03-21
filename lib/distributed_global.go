@@ -13,15 +13,15 @@ import (
 )
 
 type ClusterGlobalRateLimiter struct {
-	sync.RWMutex
 	globalBucketsMap map[uint64]*leakybucket.Bucket
-	memStorage *memory.Storage
+	memStorage       *memory.Storage
+	sync.RWMutex
 }
 
 func NewClusterGlobalRateLimiter() *ClusterGlobalRateLimiter {
 	memStorage := memory.New()
 	return &ClusterGlobalRateLimiter{
-		memStorage: memStorage,
+		memStorage:       memStorage,
 		globalBucketsMap: make(map[uint64]*leakybucket.Bucket),
 	}
 }
@@ -53,7 +53,7 @@ func (c *ClusterGlobalRateLimiter) getOrCreate(botHash uint64, botLimit uint) *l
 			return b
 		}
 
-		globalBucket, _ := c.memStorage.Create(strconv.FormatUint(botHash, 10), botLimit, 1 * time.Second)
+		globalBucket, _ := c.memStorage.Create(strconv.FormatUint(botHash, 10), botLimit, 1*time.Second)
 		c.globalBucketsMap[botHash] = &globalBucket
 		c.Unlock()
 		return &globalBucket
@@ -61,10 +61,8 @@ func (c *ClusterGlobalRateLimiter) getOrCreate(botHash uint64, botLimit uint) *l
 		return b
 	}
 }
-
-
 func (c *ClusterGlobalRateLimiter) FireGlobalRequest(ctx context.Context, addr string, botHash uint64, botLimit uint) error {
-	globalReq, err := http.NewRequestWithContext(ctx, "GET", "http://" + addr + "/nirn/global", nil)
+	globalReq, err := http.NewRequestWithContext(ctx, "GET", "http://"+addr+"/nirn/global", nil)
 	if err != nil {
 		return err
 	}

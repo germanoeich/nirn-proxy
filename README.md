@@ -29,26 +29,27 @@ The proxy sits between the client and discord. Instead of pointing to discord.co
 
 Configuration options are
 
-| Variable        | Value                                       | Default |
-|-----------------|---------------------------------------------|---------|
-| LOG_LEVEL       | panic, fatal, error, warn, info, debug, trace | info    |
-| PORT            | number                                      | 8080    |
-| METRICS_PORT    | number                                      | 9000    |
-| ENABLE_METRICS  | boolean                                     | true    |
-| ENABLE_PPROF    | boolean                                     | false   |
-| BUFFER_SIZE     | number                                      | 50      |
-| OUTBOUND_IP     | string                                      | ""      |
-| BIND_IP         | string                                      | 0.0.0.0 |
-| REQUEST_TIMEOUT | number (milliseconds)                       | 5000    |
-| CLUSTER_PORT    | number                                      | 7946    |
-| CLUSTER_MEMBERS | string list (comma separated)               | ""      |
-| CLUSTER_DNS     | string                                      | ""      |
-| MAX_BEARER_COUNT| number                                      | 1024    |
-| DISABLE_HTTP_2  | bool                                        | true    |
-| BOT_RATELIMIT_OVERRIDES | string list (comma separated)       | ""      |
-| DISABLE_GLOBAL_RATELIMIT_DETECTION | boolean                  | false   |
+| Variable                           | Value                                         | Default |
+|------------------------------------|-----------------------------------------------|---------|
+| LOG_LEVEL                          | panic, fatal, error, warn, info, debug, trace | info    |
+| PORT                               | number                                        | 8080    |
+| METRICS_PORT                       | number                                        | 9000    |
+| ENABLE_METRICS                     | boolean                                       | true    |
+| ENABLE_PPROF                       | boolean                                       | false   |
+| BUFFER_SIZE                        | number                                        | 50      |
+| OUTBOUND_IP                        | string                                        | ""      |
+| BIND_IP                            | string                                        | 0.0.0.0 |
+| REQUEST_TIMEOUT                    | number (milliseconds)                         | 5000    |
+| CLUSTER_PORT                       | number                                        | 7946    |
+| CLUSTER_MEMBERS                    | string list (comma separated)                 | ""      |
+| CLUSTER_DNS                        | string                                        | ""      |
+| MAX_BEARER_COUNT                   | number                                        | 1024    |
+| DISABLE_HTTP_2                     | bool                                          | true    |
+| BOT_RATELIMIT_OVERRIDES            | string list (comma separated)                 | ""      |
+| DISABLE_GLOBAL_RATELIMIT_DETECTION | boolean                                       | false   |
+| ALLOW_CONCURRENT_REQUESTS          | boolean                                       | true    |
 
-Information on each config var can be found [here](https://github.com/germanoeich/nirn-proxy/blob/main/CONFIG.md)
+Information on each config var can be found [here](CONFIG.md)
 
 .env files are loaded if present
 
@@ -106,14 +107,14 @@ This will vary depending on your usage, how many unique routes you see, etc. For
 
 ### Metrics / Health
 
-| Key                                | Labels                                 | Description                                                |
-|------------------------------------|----------------------------------------|------------------------------------------------------------|
-|nirn_proxy_error                    | none                                   | Counter for errors                                         |
-|nirn_proxy_requests                 | method, status, route, clientId        | Histogram that keeps track of all request metrics          |
-|nirn_proxy_open_connections         | route, method                          | Gauge for open client connections with the proxy           |
-|nirn_proxy_requests_routed_sent     | none                                   | Counter for requests routed to other nodes                 |
-|nirn_proxy_requests_routed_received | none                                   | Counter for requests received from other nodes             |
-|nirn_proxy_requests_routed_error    | none                                   | Counter for requests routed that failed                    |
+| Key                                 | Labels                          | Description                                       |
+|-------------------------------------|---------------------------------|---------------------------------------------------|
+| nirn_proxy_error                    | none                            | Counter for errors                                |
+| nirn_proxy_requests                 | method, status, route, clientId | Histogram that keeps track of all request metrics |
+| nirn_proxy_open_connections         | route, method                   | Gauge for open client connections with the proxy  |
+| nirn_proxy_requests_routed_sent     | none                            | Counter for requests routed to other nodes        |
+| nirn_proxy_requests_routed_received | none                            | Counter for requests received from other nodes    |
+| nirn_proxy_requests_routed_error    | none                            | Counter for requests routed that failed           |
 
 Note: 429s can produce two status: 429 Too Many Requests or 429 Shared. The latter is only produced for requests that return with the x-ratelimit-scope header set to "shared", which means they don't count towards the cloudflare firewall limit and thus should not be used for alerts, etc.
 
